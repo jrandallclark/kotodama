@@ -52,6 +52,7 @@ private:
     void updateButtonColor(QPushButton* button, const QColor& color);
     QColor getDefaultLightColor(const QString& level);
     QColor getDefaultDarkColor(const QString& level);
+    static const QStringList& highlightLevels();
 };
 
 #endif // SETTINGSDIALOG_H

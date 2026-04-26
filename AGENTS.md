@@ -32,14 +32,16 @@ open build/kotodama.app
 # Run all tests
 ./run_tests.sh
 
-# Or manually
+# Or manually (use tail to reduce token usage - only shows last 30 lines)
 cd build
-ctest
+ctest | tail -30
 
 # Run specific test
 cd build
 ./tests/tst_tokenizer
 ```
+
+**Token Efficiency Tip:** When running tests, always pipe through `| tail -30` to limit output. Full test output is ~300 lines but the important result (pass/fail status) is at the end.
 
 ## Project Structure
 
@@ -94,8 +96,19 @@ kotodama/
 ## Architecture Patterns
 
 ### 1. MVC Pattern
+
+#### Layer Responsibilities
+
 - **View:** UI classes (MainWindow, EbookViewer, dialogs)
+  - **Render** data provided by Model
+  - **Forward** user actions to Model
+  - **Never** construct business objects or decide what data means
+  
 - **Model:** Business logic classes (MainWindowModel, EbookViewModel)
+  - **Provide** data structures ready for display
+  - **Contain** all business rules and data transformations
+  - **Decide** what messages/values to show for different states
+  
 - **Controller:** Qt signals/slots connecting views to models
 
 Example:
@@ -106,6 +119,68 @@ MainWindow::MainWindow() {
     connect(importButton, &QPushButton::clicked, model, &MainWindowModel::importText);
 }
 ```
+
+#### MVC Anti-Pattern: Business Logic in View
+
+**Bad** - View constructs objects and decides what message to show:
+```cpp
+void EbookViewer::updatePreview() {
+    Term* term = model.findTerm(position);
+    if (term) {
+        infoPanel->show(*term);  // OK: just rendering
+    } else {
+        // BAD: View deciding what "unknown" means
+        Term unknown;
+        unknown.term = token->text;
+        unknown.definition = "Click to add definition";  // Business logic!
+        infoPanel->show(unknown);
+    }
+}
+```
+
+**Good** - Model provides complete preview data:
+```cpp
+// Model decides what to show
+TermPreview EbookViewModel::getPreview(const TokenInfo* token) {
+    Term* term = findTerm(token->position);
+    if (term) {
+        return TermPreview{term->term, term->definition, true};
+    }
+    // Model decides placeholder for unknown terms
+    return TermPreview{token->text, "Click to add definition", false};
+}
+
+// View just renders
+void EbookViewer::updatePreview() {
+    TermPreview preview = model.getPreview(token);
+    infoPanel->show(preview);
+}
+```
+
+#### View Function Separation
+
+Separate **trigger detection** from **UI rendering** to enable multiple triggers:
+
+```cpp
+// Trigger-specific: responds to focus change
+void EbookViewer::updatePreviewForFocusedToken() {
+    TermPreview preview = model.getPreviewForToken(currentToken);
+    showTermPreview(preview);  // Delegate to reusable helper
+}
+
+// Trigger-specific: responds to search
+void EbookViewer::updatePreviewFromSearch(const QString& term) {
+    TermPreview preview = model.getPreviewForSearch(term);
+    showTermPreview(preview);  // Same helper
+}
+
+// UI helper: pure rendering, no business logic
+void EbookViewer::showTermPreview(const TermPreview& preview) {
+    infoPanel->show(preview);
+}
+```
+
+**Rule of thumb:** If a View function constructs business objects or contains string literals that describe business states, move that logic to the Model.
 
 ### 2. Singleton Pattern
 All manager classes use singleton pattern:

@@ -13,6 +13,12 @@
 #include <QDialogButtonBox>
 #include <QSpinBox>
 
+const QStringList& SettingsDialog::highlightLevels()
+{
+    static const QStringList levels = {"Recognized", "Learning", "Known", "WellKnown", "Unknown", "Ignored", "Focus"};
+    return levels;
+}
+
 SettingsDialog::SettingsDialog(QWidget *parent)
     : QDialog(parent)
 {
@@ -121,9 +127,8 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     QVBoxLayout* highlightLayout = new QVBoxLayout(highlightGroup);
     highlightLayout->setSpacing(8);
 
-    // Define highlight levels
-    QStringList levels = {"Recognized", "Learning", "Known", "WellKnown", "Unknown", "Ignored"};
-    QStringList levelLabels = {"New:", "Learning:", "Known:", "Well Known:", "Unknown:", "Ignored:"};
+    const QStringList& levels = highlightLevels();
+    QStringList levelLabels = {"New:", "Learning:", "Known:", "Well Known:", "Unknown:", "Ignored:", "Focus:"};
 
     loadColors();
 
@@ -255,8 +260,7 @@ void SettingsDialog::loadColors()
 {
     QSettings settings;
 
-    QStringList levels = {"Recognized", "Learning", "Known", "WellKnown", "Unknown", "Ignored"};
-    for (const QString& level : levels) {
+    for (const QString& level : highlightLevels()) {
         // Load light theme colors
         QColor defaultLightColor = getDefaultLightColor(level);
         QColor lightColor = settings.value("colors/light/" + level, defaultLightColor).value<QColor>();
@@ -318,6 +322,7 @@ QColor SettingsDialog::getDefaultLightColor(const QString& level)
     else if (level == "WellKnown") color = ThemeManager::instance().getColor(ThemeColor::LevelWellKnown);
     else if (level == "Unknown") color = ThemeManager::instance().getColor(ThemeColor::LevelUnknown);
     else if (level == "Ignored") color = ThemeManager::instance().getColor(ThemeColor::LevelIgnored);
+    else if (level == "Focus") color = ThemeManager::instance().getColor(ThemeColor::Primary);  // Focus defaults to Primary
     else color = QColor(Qt::transparent);
 
     ThemeManager::instance().setThemeMode(savedMode);
@@ -337,6 +342,7 @@ QColor SettingsDialog::getDefaultDarkColor(const QString& level)
     else if (level == "WellKnown") color = ThemeManager::instance().getColor(ThemeColor::LevelWellKnown);
     else if (level == "Unknown") color = ThemeManager::instance().getColor(ThemeColor::LevelUnknown);
     else if (level == "Ignored") color = ThemeManager::instance().getColor(ThemeColor::LevelIgnored);
+    else if (level == "Focus") color = ThemeManager::instance().getColor(ThemeColor::Primary);  // Focus defaults to Primary
     else color = QColor(Qt::transparent);
 
     ThemeManager::instance().setThemeMode(savedMode);
@@ -370,10 +376,8 @@ void SettingsDialog::onColorButtonClicked()
 
 void SettingsDialog::onResetColorsClicked()
 {
-    QStringList levels = {"Recognized", "Learning", "Known", "WellKnown", "Unknown", "Ignored"};
-
     // Reset all colors to defaults
-    for (const QString& level : levels) {
+    for (const QString& level : highlightLevels()) {
         lightColors[level] = getDefaultLightColor(level);
         darkColors[level] = getDefaultDarkColor(level);
 

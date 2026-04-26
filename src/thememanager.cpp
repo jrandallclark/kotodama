@@ -115,6 +115,10 @@ QColor ThemeManager::getLightColor(ThemeColor color) const
     case ThemeColor::PrimaryPressed:
         return QColor("#0D47A1");  // Blue 900
 
+    // Focus highlight (underline color for keyboard navigation)
+    case ThemeColor::Focus:
+        return QColor("#1976D2");  // Blue 700 (same as Primary)
+
     // Term levels
     case ThemeColor::LevelRecognized:
         return QColor("#66BB6A");  // Green 400 
@@ -166,6 +170,10 @@ QColor ThemeManager::getDarkColor(ThemeColor color) const
         return QColor("#64B5F6");  // Blue 300
     case ThemeColor::PrimaryPressed:
         return QColor("#90CAF9");  // Blue 200
+
+    // Focus highlight (underline color for keyboard navigation)
+    case ThemeColor::Focus:
+        return QColor("#42A5F5");  // Blue 400 (same as Primary)
 
     // Term levels
     case ThemeColor::LevelRecognized:

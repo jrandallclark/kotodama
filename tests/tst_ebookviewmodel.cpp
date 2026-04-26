@@ -690,3 +690,366 @@ TEST_F(EbookViewModelTest, JapaneseTermTokenCountMatchesCharCount) {
         }
     }
 }
+
+// ============================================================================
+// TermValidationResult Tests
+// ============================================================================
+
+TEST_F(EbookViewModelTest, ValidateTermLength_EnglishWithinLimit) {
+    EbookViewModel model;
+    model.loadContent("test", "en");
+
+    TermValidationResult result = model.validateTermLength("hello world");
+
+    EXPECT_TRUE(result.isValid);
+    EXPECT_TRUE(result.warningMessage.isEmpty());
+}
+
+TEST_F(EbookViewModelTest, ValidateTermLength_EnglishExceedsLimit) {
+    EbookViewModel model;
+    model.loadContent("test", "en");
+
+    // Create a string with 7 words (limit is 6 for English)
+    QString longTerm = "one two three four five six seven";
+    TermValidationResult result = model.validateTermLength(longTerm);
+
+    EXPECT_FALSE(result.isValid);
+    EXPECT_FALSE(result.warningMessage.isEmpty());
+    EXPECT_TRUE(result.warningMessage.contains("6"));
+}
+
+TEST_F(EbookViewModelTest, ValidateTermLength_JapaneseWithinLimit) {
+    EbookViewModel model;
+    model.loadContent("テスト", "ja");
+
+    // 10 chars (limit is 15 for Japanese)
+    TermValidationResult result = model.validateTermLength("これはテストです");
+
+    EXPECT_TRUE(result.isValid);
+    EXPECT_TRUE(result.warningMessage.isEmpty());
+}
+
+TEST_F(EbookViewModelTest, ValidateTermLength_JapaneseExceedsLimit) {
+    EbookViewModel model;
+    model.loadContent("テスト", "ja");
+
+    // Create a string with 13 chars (limit is 12 for Japanese)
+    QString longTerm = "これは非常に長い日本語のテス";
+    TermValidationResult result = model.validateTermLength(longTerm);
+
+    EXPECT_FALSE(result.isValid);
+    EXPECT_FALSE(result.warningMessage.isEmpty());
+    EXPECT_TRUE(result.warningMessage.contains("12"));
+}
+
+// ============================================================================
+// EditRequest Tests
+// ============================================================================
+
+TEST_F(EbookViewModelTest, GetEditRequestForPosition_KnownTerm) {
+    TermManager::instance().addTerm("hello", "en", TermLevel::Learning, "a greeting", "heh-loh");
+
+    EbookViewModel model;
+    model.loadContent("hello world", "en");
+
+    // Position 0 is inside "hello"
+    EditRequest request = model.getEditRequestForPosition(0);
+
+    EXPECT_EQ(request.termText, "hello");
+    EXPECT_TRUE(request.exists);
+    EXPECT_EQ(request.existingDefinition, "a greeting");
+    EXPECT_EQ(request.existingPronunciation, "heh-loh");
+    EXPECT_EQ(request.existingLevel, TermLevel::Learning);
+    EXPECT_FALSE(request.showWarning);
+}
+
+TEST_F(EbookViewModelTest, GetEditRequestForPosition_UnknownToken) {
+    EbookViewModel model;
+    model.loadContent("hello world", "en");
+
+    // Position 6 is inside "world" (unknown)
+    EditRequest request = model.getEditRequestForPosition(6);
+
+    EXPECT_EQ(request.termText, "world");
+    EXPECT_FALSE(request.exists);
+    EXPECT_FALSE(request.showWarning);
+}
+
+TEST_F(EbookViewModelTest, GetEditRequestForPosition_MultiWordTerm) {
+    TermManager::instance().addTerm("hello world", "en", TermLevel::Known, "common phrase");
+
+    EbookViewModel model;
+    model.loadContent("say hello world now", "en");
+
+    // Position 4 is inside "hello" which is part of multi-word term
+    EditRequest request = model.getEditRequestForPosition(4);
+
+    EXPECT_EQ(request.termText, "hello world");
+    EXPECT_TRUE(request.exists);
+    EXPECT_EQ(request.existingDefinition, "common phrase");
+}
+
+TEST_F(EbookViewModelTest, GetEditRequestForPosition_InvalidPosition) {
+    EbookViewModel model;
+    model.loadContent("hello", "en");
+
+    // Position 100 is outside text
+    EditRequest request = model.getEditRequestForPosition(100);
+
+    EXPECT_TRUE(request.termText.isEmpty());
+}
+
+TEST_F(EbookViewModelTest, ValidateTermLength_TooLongTerm) {
+    EbookViewModel model;
+    model.loadContent("test", "en");
+
+    // Try to create a term at position with a too-long selection
+    // First add a super long "term" by just clicking on a word
+    // But validation happens on the selected text, so we need to simulate that
+    // Actually, validation happens in getEditRequest, so let's test it there
+
+    // Create a mock long term by directly testing validation path
+    QString longTerm = "one two three four five six seven eight nine ten eleven";
+    TermValidationResult validation = model.validateTermLength(longTerm);
+    EXPECT_FALSE(validation.isValid);
+}
+
+TEST_F(EbookViewModelTest, GetEditRequestForSelection_KnownTerm) {
+    TermManager::instance().addTerm("hello world", "en", TermLevel::Known);
+
+    EbookViewModel model;
+    model.loadContent("say hello world here", "en");
+
+    // Select "hello world" (positions 4-15)
+    EditRequest request = model.getEditRequestForSelection(4, 15);
+
+    EXPECT_EQ(request.termText, "hello world");
+    EXPECT_TRUE(request.exists);
+}
+
+TEST_F(EbookViewModelTest, GetEditRequestForSelection_UnknownTokens) {
+    EbookViewModel model;
+    model.loadContent("hello world test", "en");
+
+    // Select "world test" (positions 6-16)
+    EditRequest request = model.getEditRequestForSelection(6, 16);
+
+    EXPECT_EQ(request.termText, "world test");
+    EXPECT_FALSE(request.exists);
+}
+
+TEST_F(EbookViewModelTest, GetEditRequestForFocusedToken_Known) {
+    TermManager::instance().addTerm("hello", "en", TermLevel::Learning);
+
+    EbookViewModel model;
+    model.loadContent("hello world", "en");
+    model.setFocusedTokenIndex(0);
+
+    EditRequest request = model.getEditRequestForFocusedToken();
+
+    EXPECT_EQ(request.termText, "hello");
+    EXPECT_TRUE(request.exists);
+}
+
+TEST_F(EbookViewModelTest, GetEditRequestForFocusedToken_Unknown) {
+    EbookViewModel model;
+    model.loadContent("hello world", "en");
+    model.setFocusedTokenIndex(1); // "world"
+
+    EditRequest request = model.getEditRequestForFocusedToken();
+
+    EXPECT_EQ(request.termText, "world");
+    EXPECT_FALSE(request.exists);
+}
+
+TEST_F(EbookViewModelTest, GetEditRequestForFocusedToken_NoFocus) {
+    EbookViewModel model;
+    model.loadContent("hello world", "en");
+    // Don't set focus
+
+    EditRequest request = model.getEditRequestForFocusedToken();
+
+    EXPECT_TRUE(request.termText.isEmpty());
+}
+
+// ============================================================================
+// Focus Range Tests
+// ============================================================================
+
+TEST_F(EbookViewModelTest, GetFocusRange_SingleTokenReturnsTokenSpan) {
+    EbookViewModel model;
+    model.loadContent("hello world", "en");
+
+    // "hello" is at positions [0, 5)
+    QPair<int, int> range = model.getFocusRange(0);
+
+    EXPECT_EQ(range.first, 0);
+    EXPECT_EQ(range.second, 5);
+}
+
+TEST_F(EbookViewModelTest, GetFocusRange_MultiWordTermReturnsFullTermSpan) {
+    TermManager::instance().addTerm("hello world", "en", TermLevel::Known);
+
+    EbookViewModel model;
+    model.loadContent("say hello world now", "en");
+
+    // "hello" is token index 1, but it's part of the "hello world" term [4, 15)
+    QPair<int, int> range = model.getFocusRange(1);
+
+    EXPECT_EQ(range.first, 4);
+    EXPECT_EQ(range.second, 15);
+}
+
+TEST_F(EbookViewModelTest, GetFocusRange_SecondTokenInMultiWordTermReturnsSameSpan) {
+    TermManager::instance().addTerm("hello world", "en", TermLevel::Known);
+
+    EbookViewModel model;
+    model.loadContent("say hello world now", "en");
+
+    // "world" is token index 2, also part of "hello world" term [4, 15)
+    QPair<int, int> range = model.getFocusRange(2);
+
+    EXPECT_EQ(range.first, 4);
+    EXPECT_EQ(range.second, 15);
+}
+
+TEST_F(EbookViewModelTest, GetFocusRange_JapaneseMultiCharTermReturnsFullSpan) {
+    TermManager::instance().addTerm("した", "ja", TermLevel::Known);
+
+    EbookViewModel model;
+    model.loadContent("にした際", "ja");
+
+    // Find which token index corresponds to "し"
+    const auto& tokens = model.getTokenBoundaries();
+    int shiIndex = -1;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        if (tokens[i].text == "し") {
+            shiIndex = static_cast<int>(i);
+            break;
+        }
+    }
+
+    ASSERT_GE(shiIndex, 0) << "Could not find token 'し'";
+
+    // "し" is part of "した" term - should return full term span
+    QPair<int, int> range = model.getFocusRange(shiIndex);
+
+    // The term "した" should span both characters
+    EXPECT_EQ(range.second - range.first, 2)
+        << "Focus range for 'し' should span 2 characters (the full 'した' term)";
+}
+
+TEST_F(EbookViewModelTest, GetFocusRange_InvalidIndexReturnsEmpty) {
+    EbookViewModel model;
+    model.loadContent("hello", "en");
+
+    QPair<int, int> range = model.getFocusRange(-1);
+
+    EXPECT_EQ(range.first, -1);
+    EXPECT_EQ(range.second, -1);
+}
+
+TEST_F(EbookViewModelTest, FindFirstTokenAtOrAfter_ReturnsFirstTokenAfterPos) {
+    EbookViewModel model;
+    model.loadContent("hello world test", "en");
+
+    // Position 2 is inside "hello" [0, 5), first visible token is "hello" (index 0)
+    EXPECT_EQ(model.findFirstTokenAtOrAfter(2), 0);
+
+    // Position 5 is the space between words, first token at/after is "world" (index 1)
+    EXPECT_EQ(model.findFirstTokenAtOrAfter(5), 1);
+
+    // Position 6 is inside "world" [6, 11), first visible token is "world" (index 1)
+    EXPECT_EQ(model.findFirstTokenAtOrAfter(6), 1);
+
+    // Position 20 is past the end
+    EXPECT_EQ(model.findFirstTokenAtOrAfter(20), -1);
+}
+
+TEST_F(EbookViewModelTest, FindLastTokenAtOrBefore_ReturnsLastTokenBeforePos) {
+    EbookViewModel model;
+    model.loadContent("hello world test", "en");
+
+    // Position 2 is inside "hello", last token at or before is "hello" (index 0)
+    EXPECT_EQ(model.findLastTokenAtOrBefore(2), 0);
+
+    // Position 5 is the space, last token at or before is "hello" (index 0)
+    EXPECT_EQ(model.findLastTokenAtOrBefore(5), 0);
+
+    // Position 6 is inside "world", last token at or before is "world" (index 1)
+    EXPECT_EQ(model.findLastTokenAtOrBefore(6), 1);
+
+    // Position 20 is past the end, last token at or before is "test" (index 2)
+    EXPECT_EQ(model.findLastTokenAtOrBefore(20), 2);
+}
+
+// ============================================================================
+// TermPreview Tests
+// ============================================================================
+
+TEST_F(EbookViewModelTest, GetPreviewForNullTokenReturnsEmptyPreview) {
+    EbookViewModel model;
+    model.loadContent("hello world", "en");
+
+    TermPreview preview = model.getPreviewForToken(nullptr);
+
+    EXPECT_TRUE(preview.term.isEmpty());
+    EXPECT_TRUE(preview.pronunciation.isEmpty());
+    EXPECT_TRUE(preview.definition.isEmpty());
+    EXPECT_FALSE(preview.isKnown);
+}
+
+TEST_F(EbookViewModelTest, GetPreviewForKnownTermReturnsTermData) {
+    TermManager::instance().addTerm("hello", "en", TermLevel::Learning, "greeting", "pronunciation");
+
+    EbookViewModel model;
+    model.loadContent("hello world", "en");
+
+    const TokenInfo* token = model.getFocusedToken(); // Initially no focus
+    model.setFocusedTokenIndex(0); // Focus on "hello"
+    token = model.getFocusedToken();
+    ASSERT_NE(token, nullptr);
+
+    TermPreview preview = model.getPreviewForToken(token);
+
+    EXPECT_EQ(preview.term, "hello");
+    EXPECT_EQ(preview.pronunciation, "pronunciation");
+    EXPECT_EQ(preview.definition, "greeting");
+    EXPECT_TRUE(preview.isKnown);
+}
+
+TEST_F(EbookViewModelTest, GetPreviewForUnknownWordReturnsPlaceholder) {
+    EbookViewModel model;
+    model.loadContent("hello world", "en");
+
+    model.setFocusedTokenIndex(0); // Focus on "hello" (not a known term)
+    const TokenInfo* token = model.getFocusedToken();
+    ASSERT_NE(token, nullptr);
+
+    TermPreview preview = model.getPreviewForToken(token);
+
+    EXPECT_EQ(preview.term, "hello");
+    EXPECT_TRUE(preview.pronunciation.isEmpty());
+    EXPECT_EQ(preview.definition, "Click to add definition");
+    EXPECT_FALSE(preview.isKnown);
+}
+
+TEST_F(EbookViewModelTest, GetPreviewForMultiWordKnownTerm) {
+    TermManager::instance().addTerm("hello world", "en", TermLevel::Known, "common phrase", "pron");
+
+    EbookViewModel model;
+    model.loadContent("say hello world now", "en");
+
+    // Find a token within the multi-word term
+    const auto& tokens = model.getTokenBoundaries();
+    ASSERT_GE(tokens.size(), 3u);
+    // "hello" should be at index 1, within the "hello world" term
+    const TokenInfo* token = &tokens[1];
+
+    TermPreview preview = model.getPreviewForToken(token);
+
+    EXPECT_EQ(preview.term, "hello world");
+    EXPECT_EQ(preview.pronunciation, "pron");
+    EXPECT_EQ(preview.definition, "common phrase");
+    EXPECT_TRUE(preview.isKnown);
+}

@@ -257,18 +257,23 @@ void TermInfoPanel::setupUI()
     levelNewRadio = new QRadioButton();
     levelNewRadio->setIcon(createColorIcon(newColor));
     levelNewRadio->setText("Recognized");
+    levelNewRadio->setFocusPolicy(Qt::StrongFocus);
     levelLearningRadio = new QRadioButton();
     levelLearningRadio->setIcon(createColorIcon(learningColor));
     levelLearningRadio->setText("Learning");
+    levelLearningRadio->setFocusPolicy(Qt::StrongFocus);
     levelKnownRadio = new QRadioButton();
     levelKnownRadio->setIcon(createColorIcon(knownColor));
     levelKnownRadio->setText("Known");
+    levelKnownRadio->setFocusPolicy(Qt::StrongFocus);
     levelWellKnownRadio = new QRadioButton();
     levelWellKnownRadio->setIcon(createColorIcon(wellKnownColor));
     levelWellKnownRadio->setText("Well Known");
+    levelWellKnownRadio->setFocusPolicy(Qt::StrongFocus);
     levelIgnoredRadio = new QRadioButton();
     levelIgnoredRadio->setIcon(createColorIcon(ignoredColor));
     levelIgnoredRadio->setText("Ignored");
+    levelIgnoredRadio->setFocusPolicy(Qt::StrongFocus);
 
     // Add to button group with IDs matching TermLevel enum
     levelButtonGroup->addButton(levelNewRadio, static_cast<int>(TermLevel::Recognized));
@@ -281,9 +286,10 @@ void TermInfoPanel::setupUI()
     QString radioStyle = QString(R"(
         QRadioButton {
             font-size: 14px;
-            color: %12
+            color: %1;
             padding: 6px 8px;
             background-color: transparent;
+            border-radius: 4px;
         }
         QRadioButton::indicator {
             width: 12px;
@@ -301,7 +307,11 @@ void TermInfoPanel::setupUI()
         }
         QRadioButton:hover {
             background-color: %5;
-            border-radius: 4px;
+        }
+        QRadioButton:focus {
+            outline: none;
+            border: 1px solid %4;
+            padding: 5px 7px;
         }
     )").arg(ThemeManager::instance().getColorHex(ThemeColor::TextPrimary))
        .arg(ThemeManager::instance().getColorHex(ThemeColor::Border))
@@ -456,6 +466,18 @@ void TermInfoPanel::setupUI()
     connect(cancelButton, &QPushButton::clicked, this, &TermInfoPanel::onCancelClicked);
     connect(deleteButton, &QPushButton::clicked, this, &TermInfoPanel::onDeleteClicked);
 
+    // Set tab order for edit mode
+    setTabOrder(pronunciationEdit, definitionEdit);
+    setTabOrder(definitionEdit, aiGenerateButton);
+    setTabOrder(aiGenerateButton, levelNewRadio);
+    setTabOrder(levelNewRadio, levelLearningRadio);
+    setTabOrder(levelLearningRadio, levelKnownRadio);
+    setTabOrder(levelKnownRadio, levelWellKnownRadio);
+    setTabOrder(levelWellKnownRadio, levelIgnoredRadio);
+    setTabOrder(levelIgnoredRadio, deleteButton);
+    setTabOrder(deleteButton, cancelButton);
+    setTabOrder(cancelButton, saveButton);
+
     // Start in preview mode with default message
     editContainer->setVisible(false);
     warningContainer->setVisible(false);
@@ -527,8 +549,8 @@ void TermInfoPanel::showEdit(const QString& termText, const QString& language,
     // Update radio button labels based on current width
     updateRadioButtonLabels(width());
 
-    // Don't auto-focus any field to allow keyboard shortcuts to work
-    editContainer->setFocus();
+    // Focus the pronunciation field for keyboard navigation
+    pronunciationEdit->setFocus();
 }
 
 void TermInfoPanel::showWarning(const QString& termText, const QString& message)
@@ -592,43 +614,50 @@ void TermInfoPanel::keyPressEvent(QKeyEvent* event)
         return;
     }
 
-    // Check if a text field has focus - if so, don't intercept
-    if (pronunciationEdit->hasFocus() || definitionEdit->hasFocus()) {
-        QWidget::keyPressEvent(event);
+    // Handle Escape key to cancel (always works in edit mode)
+    if (event->key() == Qt::Key_Escape) {
+        onCancelClicked();
+        event->accept();
         return;
     }
 
-    // Handle number key shortcuts for quick level selection and save
-    switch (event->key()) {
-    case Qt::Key_1:
-        levelNewRadio->setChecked(true);
+    // Handle Enter key to save
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        // Save when Enter is pressed, regardless of focus
         onSaveClicked();
         event->accept();
         return;
-    case Qt::Key_2:
-        levelLearningRadio->setChecked(true);
-        onSaveClicked();
-        event->accept();
-        return;
-    case Qt::Key_3:
-        levelKnownRadio->setChecked(true);
-        onSaveClicked();
-        event->accept();
-        return;
-    case Qt::Key_4:
-        levelWellKnownRadio->setChecked(true);
-        onSaveClicked();
-        event->accept();
-        return;
-    case Qt::Key_5:
-        levelIgnoredRadio->setChecked(true);
-        onSaveClicked();
-        event->accept();
-        return;
-    default:
-        QWidget::keyPressEvent(event);
-        break;
     }
+
+    // Check for Cmd/Ctrl + number shortcuts (works even when text fields have focus)
+    // Qt::MetaModifier is Cmd on macOS, Qt::ControlModifier is Ctrl on Windows/Linux
+    bool hasModifier = (event->modifiers() & Qt::ControlModifier) ||
+                       (event->modifiers() & Qt::MetaModifier);
+    if (hasModifier) {
+        // Map keys 1-5 to TermLevel enum values explicitly
+        TermLevel targetLevel;
+        bool validKey = true;
+        switch (event->key()) {
+            case Qt::Key_1: targetLevel = TermLevel::Recognized; break;
+            case Qt::Key_2: targetLevel = TermLevel::Learning; break;
+            case Qt::Key_3: targetLevel = TermLevel::Known; break;
+            case Qt::Key_4: targetLevel = TermLevel::WellKnown; break;
+            case Qt::Key_5: targetLevel = TermLevel::Ignored; break;
+            default: validKey = false;
+        }
+        if (validKey) {
+            QAbstractButton* button = levelButtonGroup->button(static_cast<int>(targetLevel));
+            if (button) {
+                button->setChecked(true);
+                onSaveClicked();
+                event->accept();
+                return;
+            }
+        }
+    }
+
+    // Pass through to default handler
+    QWidget::keyPressEvent(event);
 }
 
 QString TermInfoPanel::getColorForLevel(TermLevel level)

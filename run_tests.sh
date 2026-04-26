@@ -59,3 +59,11 @@ echo ""
 
 # Run ctest with output on failure and pass any additional arguments
 "$CTEST" --test-dir "$BUILD_DIR" --output-on-failure "$@"
+TEST_RESULT=$?
+
+# Clean up temporary test artifacts
+if [ -d "$BUILD_DIR/Testing/Temporary" ]; then
+    rm -rf "$BUILD_DIR/Testing/Temporary"
+fi
+
+exit $TEST_RESULT

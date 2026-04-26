@@ -48,6 +48,18 @@ private:
     // Reading position tracking
     QTimer* positionSaveTimer;
 
+    // Focus for keyboard navigation
+    int previousFocusStartPos = -1;  // Track previous focus range for clearing
+    int previousFocusEndPos = -1;
+    void updateFocusHighlight();
+    void clearFocusHighlight(int startPos, int endPos);
+    void showEditPanelForFocusedToken();
+    void updatePreviewForFocusedToken();
+
+    // UI helpers: pure rendering, no business logic
+    void showTermPreview(const TermPreview& preview);
+    void showEditRequest(const EditRequest& request);
+
     // UI methods
     void applyHighlights();
     QTextCharFormat getFormatForLevel(TermLevel level);
@@ -56,6 +68,7 @@ private:
     void saveReadingPosition();
     void restoreReadingPosition();
     int adjustPositionForCharacterCenter(QPoint viewportPos, int textPos);
+    void ensureTokenVisible(int tokenIndex);
 
 private slots:
     void onTermSaved(QString pronunciation, QString definition, TermLevel level);

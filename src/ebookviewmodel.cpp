@@ -6,6 +6,7 @@
 #include "kotodama/trienode.h"
 #include "kotodama/termmanager.h"
 
+#include <QDebug>
 #include <QSet>
 
 EbookViewModel::EbookViewModel()
@@ -37,6 +38,7 @@ void EbookViewModel::analyzeText()
 void EbookViewModel::tokenizeText()
 {
     tokenBoundaries.clear();
+    focusedTokenIndex = -1;  // Reset focus when tokens are rebuilt
 
     if (text.isEmpty()) {
         return;
@@ -277,4 +279,322 @@ void EbookViewModel::refreshTermMatches()
     // Only re-match terms without re-tokenizing
     // This is much faster when only terms have changed, not the text
     findTermMatches();
+}
+
+bool EbookViewModel::setFocusedTokenIndex(int index)
+{
+    if (index >= -1 && index < static_cast<int>(tokenBoundaries.size())) {
+        focusedTokenIndex = index;
+        return true;
+    }
+    qWarning() << "EbookViewModel::setFocusedTokenIndex: Invalid index" << index
+               << "- valid range is [-1," << static_cast<int>(tokenBoundaries.size()) - 1 << "]";
+    return false;
+}
+
+const TokenInfo* EbookViewModel::getFocusedToken() const
+{
+    if (focusedTokenIndex >= 0 && focusedTokenIndex < static_cast<int>(tokenBoundaries.size())) {
+        return &tokenBoundaries[focusedTokenIndex];
+    }
+    return nullptr;
+}
+
+bool EbookViewModel::moveFocusNext()
+{
+    if (tokenBoundaries.empty()) {
+        return false;
+    }
+
+    if (focusedTokenIndex < 0) {
+        // Start at the first token
+        focusedTokenIndex = 0;
+        return true;
+    }
+
+    if (focusedTokenIndex < static_cast<int>(tokenBoundaries.size()) - 1) {
+        focusedTokenIndex++;
+        return true;
+    }
+
+    // Already at the end
+    return false;
+}
+
+bool EbookViewModel::moveFocusPrevious()
+{
+    if (tokenBoundaries.empty()) {
+        return false;
+    }
+
+    if (focusedTokenIndex < 0) {
+        // Start at the last token
+        focusedTokenIndex = static_cast<int>(tokenBoundaries.size()) - 1;
+        return true;
+    }
+
+    if (focusedTokenIndex > 0) {
+        focusedTokenIndex--;
+        return true;
+    }
+
+    // Already at the beginning
+    return false;
+}
+
+TermPreview EbookViewModel::getPreviewForToken(const TokenInfo* token) const
+{
+    if (!token) {
+        return TermPreview{};
+    }
+
+    // Find term at this position
+    for (const TermPosition& termPos : termPositions) {
+        if (token->startPos >= termPos.startPos && token->startPos < termPos.endPos) {
+            return TermPreview{
+                termPos.termData.term,
+                termPos.termData.pronunciation,
+                termPos.termData.definition,
+                true
+            };
+        }
+    }
+
+    // Unknown term
+    return TermPreview{
+        token->text,
+        "",
+        "Click to add definition",
+        false
+    };
+}
+
+TermValidationResult EbookViewModel::validateTermLength(const QString& cleanedText) const
+{
+    LanguageConfig config = LanguageManager::instance().getLanguageByCode(language);
+    int maxSize = config.tokenLimit();
+
+    if (config.isCharBased()) {
+        if (cleanedText.length() > maxSize) {
+            return TermValidationResult{
+                false,
+                QString("Term too long. Maximum %1 characters allowed.").arg(maxSize)
+            };
+        }
+    } else {
+        auto tokenResults = config.tokenizer()->tokenize(cleanedText);
+        if (static_cast<int>(tokenResults.size()) > maxSize) {
+            return TermValidationResult{
+                false,
+                QString("Term too long. Maximum %1 words allowed.").arg(maxSize)
+            };
+        }
+    }
+
+    return TermValidationResult{true, ""};
+}
+
+EditRequest EbookViewModel::getEditRequestForPosition(int position) const
+{
+    EditRequest request;
+    request.language = language;
+    request.showWarning = false;
+    request.exists = false;
+
+    // Find term at this position
+    for (const TermPosition& termPos : termPositions) {
+        if (position >= termPos.startPos && position < termPos.endPos) {
+            if (termPos.termData.id > 0) {
+                request.termText = termPos.termData.term;
+                request.exists = true;
+                request.existingPronunciation = termPos.termData.pronunciation;
+                request.existingDefinition = termPos.termData.definition;
+                request.existingLevel = termPos.termData.level;
+                break;
+            }
+        }
+    }
+
+    // No term found - use token at position
+    if (!request.exists) {
+        int tokenIdx = findTokenAtPosition(position);
+        if (tokenIdx >= 0 && tokenIdx < static_cast<int>(tokenBoundaries.size())) {
+            request.termText = tokenBoundaries[tokenIdx].text;
+        } else {
+            // Invalid position - return empty request (View will handle as "no selection")
+            request.termText = "";
+            return request;
+        }
+    }
+
+    // Clean the text
+    CleanedText cleaned = TermManager::cleanTermText(request.termText, language);
+    if (cleaned.cleaned.isEmpty()) {
+        request.showWarning = true;
+        request.warningMessage = "The selection contains no valid text.";
+        return request;
+    }
+
+    request.termText = cleaned.cleaned;
+
+    // Validate term length
+    TermValidationResult validation = validateTermLength(request.termText);
+    if (!validation.isValid) {
+        request.showWarning = true;
+        request.warningMessage = validation.warningMessage;
+        return request;
+    }
+
+    // Check existence in database (for new terms that were matched from trie but not yet saved)
+    if (!request.exists) {
+        request.exists = TermManager::instance().termExists(request.termText, language);
+        if (request.exists) {
+            Term existingTerm = TermManager::instance().getTerm(request.termText, language);
+            request.existingPronunciation = existingTerm.pronunciation;
+            request.existingDefinition = existingTerm.definition;
+            request.existingLevel = existingTerm.level;
+        }
+    }
+
+    return request;
+}
+
+EditRequest EbookViewModel::getEditRequestForSelection(int selectionStart, int selectionEnd) const
+{
+    // First check if click was inside a multi-word term
+    EditRequest request;
+    request.language = language;
+    request.showWarning = false;
+    request.exists = false;
+
+    // Check for multi-word term at selection start
+    for (const TermPosition& termPos : termPositions) {
+        if (selectionStart >= termPos.startPos && selectionStart < termPos.endPos) {
+            if (termPos.termData.tokenCount > 1) {
+                // Multi-word term - use the full term
+                request.termText = termPos.termData.term;
+                request.exists = true;
+                request.existingPronunciation = termPos.termData.pronunciation;
+                request.existingDefinition = termPos.termData.definition;
+                request.existingLevel = termPos.termData.level;
+                break;
+            }
+        }
+    }
+
+    // If no multi-word term, use token-snapped selection
+    if (!request.exists) {
+        QString selectedText = getTokenSelectionText(selectionStart, selectionEnd);
+        if (!selectedText.isEmpty()) {
+            // Check if this text corresponds to a known term
+            for (const TermPosition& termPos : termPositions) {
+                if (selectedText == termPos.termData.term) {
+                    request.termText = termPos.termData.term;
+                    request.exists = true;
+                    request.existingPronunciation = termPos.termData.pronunciation;
+                    request.existingDefinition = termPos.termData.definition;
+                    request.existingLevel = termPos.termData.level;
+                    break;
+                }
+            }
+            if (!request.exists) {
+                request.termText = selectedText;
+            }
+        }
+    }
+
+    // If still no text, return empty request
+    if (request.termText.isEmpty()) {
+        return request;
+    }
+
+    // Clean the text
+    CleanedText cleaned = TermManager::cleanTermText(request.termText, language);
+    if (cleaned.cleaned.isEmpty()) {
+        request.showWarning = true;
+        request.warningMessage = "The selection contains no valid text.";
+        return request;
+    }
+
+    request.termText = cleaned.cleaned;
+
+    // Validate term length
+    TermValidationResult validation = validateTermLength(request.termText);
+    if (!validation.isValid) {
+        request.showWarning = true;
+        request.warningMessage = validation.warningMessage;
+        return request;
+    }
+
+    // Check existence if not already known
+    if (!request.exists) {
+        request.exists = TermManager::instance().termExists(request.termText, language);
+        if (request.exists) {
+            Term existingTerm = TermManager::instance().getTerm(request.termText, language);
+            request.existingPronunciation = existingTerm.pronunciation;
+            request.existingDefinition = existingTerm.definition;
+            request.existingLevel = existingTerm.level;
+        }
+    }
+
+    return request;
+}
+
+EditRequest EbookViewModel::getEditRequestForFocusedToken() const
+{
+    const TokenInfo* token = getFocusedToken();
+    if (!token) {
+        EditRequest emptyRequest;
+        emptyRequest.language = language;
+        emptyRequest.showWarning = false;
+        emptyRequest.exists = false;
+        emptyRequest.termText = "";
+        return emptyRequest;
+    }
+
+    return getEditRequestForPosition(token->startPos);
+}
+
+QPair<int, int> EbookViewModel::getFocusRange(int tokenIndex) const
+{
+    if (tokenIndex < 0 || tokenIndex >= static_cast<int>(tokenBoundaries.size())) {
+        return qMakePair(-1, -1);
+    }
+
+    const TokenInfo& token = tokenBoundaries[tokenIndex];
+
+    // Check if this token is part of a known term
+    for (const TermPosition& termPos : termPositions) {
+        if (token.startPos >= termPos.startPos && token.startPos < termPos.endPos) {
+            // Token is inside a known term - return the full term span
+            return qMakePair(termPos.startPos, termPos.endPos);
+        }
+    }
+
+    // Not part of a known term - return the token's own span
+    return qMakePair(token.startPos, token.endPos);
+}
+
+int EbookViewModel::findFirstTokenAtOrAfter(int pos) const
+{
+    for (size_t i = 0; i < tokenBoundaries.size(); ++i) {
+        // Token is at/after pos if it contains pos or starts after pos
+        if (tokenBoundaries[i].endPos > pos) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+int EbookViewModel::findLastTokenAtOrBefore(int pos) const
+{
+    int lastIndex = -1;
+    for (size_t i = 0; i < tokenBoundaries.size(); ++i) {
+        if (tokenBoundaries[i].startPos <= pos) {
+            lastIndex = static_cast<int>(i);
+        } else {
+            break;  // Tokens are sorted by position
+        }
+    }
+    return lastIndex;
 }

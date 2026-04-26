@@ -83,3 +83,6 @@ CMakeLists.txt.user*
 REVIEW.md
 
 .claude/
+
+# CMake test artifacts
+Testing/

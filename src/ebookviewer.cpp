@@ -2,8 +2,6 @@
 #include "kotodama/termmanager.h"
 #include "kotodama/thememanager.h"
 #include "kotodama/languagemanager.h"
-#include "kotodama/languageconfig.h"
-#include "kotodama/tokenizer.h"
 #include "kotodama/databasemanager.h"
 #include "kotodama/constants.h"
 
@@ -56,6 +54,9 @@ EbookViewer::EbookViewer(QWidget *parent)
     textDisplay->viewport()->setMouseTracking(true);
     textDisplay->viewport()->installEventFilter(this);
 
+    // Install event filter on textDisplay to intercept keys for navigation
+    textDisplay->installEventFilter(this);
+
     // Create info panel widget
     infoPanel = new TermInfoPanel(centralWidget);
     connect(infoPanel, &TermInfoPanel::termSaved, this, &EbookViewer::onTermSaved);
@@ -91,6 +92,25 @@ bool EbookViewer::eventFilter(QObject *obj, QEvent *event)
         handleMouseHover(mouseEvent);
         return false; // Let the event continue to be processed
     }
+
+    // Intercept key events from textDisplay for keyboard navigation
+    if (obj == textDisplay && event->type() == QEvent::KeyPress) {
+        QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
+
+        // Only intercept Left/Right for token navigation (Up/Down scrolls)
+        switch (keyEvent->key()) {
+        case Qt::Key_Right:
+        case Qt::Key_Left:
+        case Qt::Key_Space:
+            // Process these keys in our keyPressEvent handler
+            keyPressEvent(keyEvent);
+            if (keyEvent->isAccepted()) {
+                return true; // Event handled, don't pass to textDisplay
+            }
+            break;
+        }
+    }
+
     return QMainWindow::eventFilter(obj, event); // Standard event processing
 }
 
@@ -211,11 +231,146 @@ void EbookViewer::applyHighlights()
     }
 
     cursor.endEditBlock();
+
+    // Apply focus highlight if active
+    updateFocusHighlight();
+}
+
+void EbookViewer::updateFocusHighlight()
+{
+    int focusIndex = model.getFocusedTokenIndex();
+    if (focusIndex < 0) {
+        return;
+    }
+
+    // Use Model's unified focus range (expands to full term span when applicable)
+    QPair<int, int> range = model.getFocusRange(focusIndex);
+    if (range.first < 0 || range.second <= range.first) {
+        return;
+    }
+
+    QTextCursor cursor(textDisplay->document());
+    cursor.setPosition(range.first);
+    cursor.setPosition(range.second, QTextCursor::KeepAnchor);
+
+    // Get the existing format and add soft selection highlighting
+    QTextCharFormat format = cursor.charFormat();
+
+    // Get focus color from theme manager
+    QColor focusColor = ThemeManager::instance().getColor(ThemeColor::Focus);
+
+    // Add a prominent underline to show selection
+    format.setUnderlineStyle(QTextCharFormat::SingleUnderline);
+    format.setUnderlineColor(focusColor);
+
+    // Also add a subtle background highlight
+    QColor highlightBg = focusColor;
+    highlightBg.setAlpha(40);  // Semi-transparent
+    format.setBackground(highlightBg);
+
+    cursor.setCharFormat(format);
+}
+
+void EbookViewer::updatePreviewForFocusedToken()
+{
+    const TokenInfo* token = model.getFocusedToken();
+    if (!token) {
+        infoPanel->reset();
+        return;
+    }
+
+    TermPreview preview = model.getPreviewForToken(token);
+    showTermPreview(preview);
+}
+
+void EbookViewer::showTermPreview(const TermPreview& preview)
+{
+    Term term;
+    term.term = preview.term;
+    term.pronunciation = preview.pronunciation;
+    term.definition = preview.definition;
+    infoPanel->showPreview(term);
+}
+
+void EbookViewer::clearFocusHighlight(int startPos, int endPos)
+{
+    if (startPos < 0 || endPos <= startPos) {
+        return;
+    }
+
+    // Re-apply the base highlight for this range
+    QTextCursor cursor(textDisplay->document());
+    cursor.setPosition(startPos);
+    cursor.setPosition(endPos, QTextCursor::KeepAnchor);
+
+    // Find what format this range should have (same logic as base highlights)
+    Term* term = model.findTermAtPosition(startPos);
+    QTextCharFormat format;
+    if (term) {
+        format = getFormatForLevel(term->level);
+    } else {
+        // Unknown word format
+        QColor unknownColor = ThemeManager::instance().getColor(ThemeColor::LevelUnknown);
+        if (unknownColor != Qt::transparent) {
+            format.setBackground(unknownColor);
+        }
+    }
+
+    // Explicitly clear focus formatting
+    format.setUnderlineStyle(QTextCharFormat::NoUnderline);
+    cursor.setCharFormat(format);
+}
+
+void EbookViewer::ensureTokenVisible(int tokenIndex)
+{
+    const std::vector<TokenInfo>& tokens = model.getTokenBoundaries();
+    if (tokenIndex < 0 || tokenIndex >= static_cast<int>(tokens.size())) {
+        return;
+    }
+
+    QTextCursor cursor(textDisplay->document());
+    cursor.setPosition(tokens[tokenIndex].startPos);
+    textDisplay->setTextCursor(cursor);
+    textDisplay->ensureCursorVisible();
+
+    // Clear the cursor selection visual
+    cursor.clearSelection();
+    textDisplay->setTextCursor(cursor);
+}
+
+void EbookViewer::showEditPanelForFocusedToken()
+{
+    EditRequest request = model.getEditRequestForFocusedToken();
+
+    if (request.termText.isEmpty()) {
+        return;
+    }
+
+    showEditRequest(request);
+}
+
+void EbookViewer::showEditRequest(const EditRequest& request)
+{
+    if (request.showWarning) {
+        infoPanel->showWarning(request.termText, request.warningMessage);
+    } else if (request.exists) {
+        infoPanel->showEdit(request.termText, request.language,
+                           request.existingPronunciation,
+                           request.existingDefinition,
+                           request.existingLevel);
+    } else {
+        infoPanel->showEdit(request.termText, request.language,
+                           "", "", TermLevel::Recognized);
+    }
+
+    infoPanelPinned = true;
+    pinnedTermText = request.termText;
+    pinnedLanguage = request.language;
 }
 
 void EbookViewer::handleMouseHover(QMouseEvent* event)
 {
-    // Don't update preview if panel is pinned in edit mode
+    // Don't update Focus if panel is pinned in edit mode
     if (infoPanelPinned) {
         return;
     }
@@ -229,29 +384,42 @@ void EbookViewer::handleMouseHover(QMouseEvent* event)
     // This fixes hovering issues with character-based languages (Japanese, Chinese)
     pos = adjustPositionForCharacterCenter(viewportPos, pos);
 
-    Term* term = model.findTermAtPosition(pos);
+    // Check if there's a token at this position
+    int tokenIdx = model.findTokenAtPosition(pos);
 
-    if (term) {
-        // Known term - show full preview
-        infoPanel->showPreview(*term);
-    } else {
-        // Check if there's a token at this position (unknown word)
-        int tokenIdx = model.findTokenAtPosition(pos);
-        if (tokenIdx >= 0) {
-            const std::vector<TokenInfo>& tokens = model.getTokenBoundaries();
-            QString tokenText = tokens[tokenIdx].text;
-
-            // Show preview for unknown token with hint to add
-            Term unknownTerm;
-            unknownTerm.term = tokenText;
-            unknownTerm.pronunciation = "";
-            unknownTerm.definition = "Click to add definition";
-            infoPanel->showPreview(unknownTerm);
-        } else {
-            // No term or token - reset to default state
-            infoPanel->reset();
-        }
+    if (tokenIdx < 0) {
+        // Not hovering over a token - don't change Focus
+        return;
     }
+
+    // Only update Focus if we've moved to a different token
+    if (tokenIdx == model.getFocusedTokenIndex()) {
+        return;
+    }
+
+    // Check if moving between tokens in the same term (same highlight range)
+    // This prevents flicker when hovering across multi-token terms
+    int previousIndex = model.getFocusedTokenIndex();
+    if (previousIndex >= 0) {
+        QPair<int, int> previousRange = model.getFocusRange(previousIndex);
+        QPair<int, int> newRange = model.getFocusRange(tokenIdx);
+        if (previousRange == newRange) {
+            // Same term - just update the focused token index without re-highlighting
+            model.setFocusedTokenIndex(tokenIdx);
+            return;
+        }
+        // Clear previous focus range
+        clearFocusHighlight(previousRange.first, previousRange.second);
+    }
+
+    // Set Focus to new token
+    if (!model.setFocusedTokenIndex(tokenIdx)) {
+        return;  // Invalid index, abort
+    }
+    updateFocusHighlight();
+
+    // Update preview panel for the Focused token
+    updatePreviewForFocusedToken();
 }
 
 void EbookViewer::mouseMoveEvent(QMouseEvent* event)
@@ -278,55 +446,23 @@ void EbookViewer::mouseReleaseEvent(QMouseEvent* event)
 void EbookViewer::handleTextSelection(QMouseEvent* event)
 {
     QTextCursor cursor = textDisplay->textCursor();
-    QString selectedText;
-    Term* existingTerm = nullptr;
+    EditRequest request;
 
     if (cursor.hasSelection()) {
-        // First check if they clicked inside a multi-word term
-        int clickPos = cursor.selectionStart();
-
-        // Adjust click position based on character bounds (same logic as hover)
-        // Event comes from mouseReleaseEvent, convert to viewport coordinates
-        QPoint viewportPos = textDisplay->viewport()->mapFromGlobal(event->globalPos());
-        clickPos = adjustPositionForCharacterCenter(viewportPos, clickPos);
-
-        existingTerm = model.findTermAtPosition(clickPos);
-
-        if (existingTerm && existingTerm->tokenCount > 1) {
-            // Clicked on a multi-word term - use the full term
-            selectedText = existingTerm->term;
-        } else {
-            // Get token-snapped selection from model
-            selectedText = model.getTokenSelectionText(
-                cursor.selectionStart(),
-                cursor.selectionEnd()
-            );
-        }
+        // Multi-token selection - use getEditRequestForSelection
+        request = model.getEditRequestForSelection(cursor.selectionStart(), cursor.selectionEnd());
     } else {
-        // Single click - check if it's on a multi-word term first
+        // Single click - use getEditRequestForPosition
         int clickPos = cursor.position();
 
         // Adjust click position based on character bounds (same logic as hover)
-        // Event comes from mouseReleaseEvent, convert to viewport coordinates
         QPoint viewportPos = textDisplay->viewport()->mapFromGlobal(event->globalPos());
         clickPos = adjustPositionForCharacterCenter(viewportPos, clickPos);
 
-        existingTerm = model.findTermAtPosition(clickPos);
-
-        if (existingTerm) {
-            // Clicked on a term (single or multi-word)
-            selectedText = existingTerm->term;
-        } else {
-            // Not on a term - select token under cursor
-            int tokenIdx = model.findTokenAtPosition(clickPos);
-            if (tokenIdx >= 0) {
-                const std::vector<TokenInfo>& tokens = model.getTokenBoundaries();
-                selectedText = tokens[tokenIdx].text;
-            }
-        }
+        request = model.getEditRequestForPosition(clickPos);
     }
 
-    if (selectedText.isEmpty()) {
+    if (request.termText.isEmpty()) {
         // If already pinned and clicking on nothing, unpin the panel
         if (infoPanelPinned) {
             infoPanelPinned = false;
@@ -337,69 +473,7 @@ void EbookViewer::handleTextSelection(QMouseEvent* event)
         return;
     }
 
-    // Clean the selected text using TermManager
-    CleanedText cleaned = TermManager::cleanTermText(selectedText, model.getLanguage());
-
-    if (cleaned.cleaned.isEmpty()) {
-        QMessageBox::information(this, "Invalid Selection",
-                                 "The selection contains no valid text.");
-        return;
-    }
-
-    // Validate term size before showing edit panel
-    QString language = model.getLanguage();
-    LanguageConfig config = LanguageManager::instance().getLanguageByCode(language);
-    int maxSize = config.tokenLimit();
-    bool termTooLong = false;
-    QString warningMessage;
-
-    if (config.isCharBased()) {
-        // Character-based language: count characters
-        int charCount = cleaned.cleaned.length();
-        if (charCount > maxSize) {
-            termTooLong = true;
-            warningMessage = QString("Term too long. Maximum %1 characters allowed for %2.")
-                              .arg(maxSize)
-                              .arg(config.name());
-        }
-    } else {
-        // Word-based language: count tokens
-        auto tokenResults = config.tokenizer()->tokenize(cleaned.cleaned);
-        int tokenCount = static_cast<int>(tokenResults.size());
-
-        if (tokenCount > maxSize) {
-            termTooLong = true;
-            warningMessage = QString("Term too long. Maximum %1 words allowed for %2.")
-                              .arg(maxSize)
-                              .arg(config.name());
-        }
-    }
-
-    if (termTooLong) {
-        // Show warning in the panel
-        infoPanel->showWarning(cleaned.cleaned, warningMessage);
-
-        // Pin the panel so clicking elsewhere dismisses it
-        infoPanelPinned = true;
-        pinnedTermText = cleaned.cleaned;
-        pinnedLanguage = model.getLanguage();
-        return;
-    }
-
-    bool exists = TermManager::instance().termExists(cleaned.cleaned, model.getLanguage());
-
-    // Show edit mode in the panel instead of opening dialog
-    if (exists) {
-        Term term = TermManager::instance().getTerm(cleaned.cleaned, model.getLanguage());
-        infoPanel->showEdit(term.term, model.getLanguage(), term.pronunciation, term.definition, term.level);
-    } else {
-        infoPanel->showEdit(cleaned.cleaned, model.getLanguage(), "", "", TermLevel::Recognized);
-    }
-
-    // Pin the panel for editing
-    infoPanelPinned = true;
-    pinnedTermText = cleaned.cleaned;
-    pinnedLanguage = model.getLanguage();
+    showEditRequest(request);
 }
 
 int EbookViewer::adjustPositionForCharacterCenter(QPoint viewportPos, int textPos)
@@ -571,14 +645,92 @@ void EbookViewer::onTermDeleted()
 
 void EbookViewer::keyPressEvent(QKeyEvent* event)
 {
+    // Handle Escape first - close panel but keep focus
     if (event->key() == Qt::Key_Escape && infoPanelPinned) {
-        // Unpin the panel
         infoPanelPinned = false;
         pinnedTermText.clear();
         pinnedLanguage.clear();
         infoPanel->reset();
         event->accept();
-    } else {
+        return;
+    }
+
+    // If panel is pinned, only handle Escape (above) and pass other keys through
+    if (infoPanelPinned) {
+        QMainWindow::keyPressEvent(event);
+        return;
+    }
+
+    // Handle arrow keys for focus navigation (Left/Right only)
+    switch (event->key()) {
+    case Qt::Key_Right:
+        {
+            int prevIndex = model.getFocusedTokenIndex();
+            if (prevIndex < 0) {
+                // No current focus - start at first visible token in viewport
+                QTextCursor viewportCursor = textDisplay->cursorForPosition(QPoint(0, 0));
+                int viewportPos = viewportCursor.position();
+                int firstVisibleToken = model.findFirstTokenAtOrAfter(viewportPos);
+                if (firstVisibleToken >= 0) {
+                    model.setFocusedTokenIndex(firstVisibleToken);
+                    updateFocusHighlight();
+                    updatePreviewForFocusedToken();
+                    ensureTokenVisible(model.getFocusedTokenIndex());
+                }
+            } else {
+                // Already has focus - move to next token
+                QPair<int, int> prevRange = model.getFocusRange(prevIndex);
+                previousFocusStartPos = prevRange.first;
+                previousFocusEndPos = prevRange.second;
+                if (model.moveFocusNext()) {
+                    clearFocusHighlight(previousFocusStartPos, previousFocusEndPos);
+                    updateFocusHighlight();
+                    updatePreviewForFocusedToken();
+                    ensureTokenVisible(model.getFocusedTokenIndex());
+                }
+            }
+        }
+        event->accept();
+        return;
+
+    case Qt::Key_Left:
+        {
+            int prevIndex = model.getFocusedTokenIndex();
+            if (prevIndex < 0) {
+                // No current focus - start at last visible token in viewport
+                QRect viewportRect = textDisplay->viewport()->rect();
+                QTextCursor viewportCursor = textDisplay->cursorForPosition(
+                    QPoint(viewportRect.width() - 1, viewportRect.height() - 1));
+                int viewportPos = viewportCursor.position();
+                int lastVisibleToken = model.findLastTokenAtOrBefore(viewportPos);
+                if (lastVisibleToken >= 0) {
+                    model.setFocusedTokenIndex(lastVisibleToken);
+                    updateFocusHighlight();
+                    updatePreviewForFocusedToken();
+                    ensureTokenVisible(model.getFocusedTokenIndex());
+                }
+            } else {
+                // Already has focus - move to previous token
+                QPair<int, int> prevRange = model.getFocusRange(prevIndex);
+                previousFocusStartPos = prevRange.first;
+                previousFocusEndPos = prevRange.second;
+                if (model.moveFocusPrevious()) {
+                    clearFocusHighlight(previousFocusStartPos, previousFocusEndPos);
+                    updateFocusHighlight();
+                    updatePreviewForFocusedToken();
+                    ensureTokenVisible(model.getFocusedTokenIndex());
+                }
+            }
+        }
+        event->accept();
+        return;
+
+    case Qt::Key_Space:
+        showEditPanelForFocusedToken();
+        event->accept();
+        return;
+
+    default:
         QMainWindow::keyPressEvent(event);
     }
 }

@@ -36,6 +36,32 @@ struct SelectionInfo {
     Term* existingTerm;  // nullptr if not found
 };
 
+// Data for term preview display
+struct TermPreview {
+    QString term;
+    QString pronunciation;
+    QString definition;
+    bool isKnown;
+};
+
+// Validation result for term length checking
+struct TermValidationResult {
+    bool isValid;
+    QString warningMessage;  // empty if valid
+};
+
+// Data for edit panel request
+struct EditRequest {
+    QString termText;
+    QString language;
+    bool exists;
+    QString existingPronunciation;
+    QString existingDefinition;
+    TermLevel existingLevel;
+    bool showWarning;
+    QString warningMessage;
+};
+
 // Business logic for ebook text analysis and term matching
 class EbookViewModel
 {
@@ -67,11 +93,38 @@ public:
     void refresh();
     void refreshTermMatches();  // Only re-match terms, don't re-tokenize
 
+    // Focus for keyboard navigation
+    bool setFocusedTokenIndex(int index);  // Returns true if set, false if out-of-range
+    int getFocusedTokenIndex() const { return focusedTokenIndex; }
+    const TokenInfo* getFocusedToken() const;
+    bool moveFocusNext();      // Returns true if moved
+    bool moveFocusPrevious();  // Returns true if moved
+
+    // Preview data for display
+    TermPreview getPreviewForToken(const TokenInfo* token) const;
+
+    // Validation and edit request
+    TermValidationResult validateTermLength(const QString& cleanedText) const;
+    EditRequest getEditRequestForPosition(int position) const;
+    EditRequest getEditRequestForSelection(int selectionStart, int selectionEnd) const;
+    EditRequest getEditRequestForFocusedToken() const;
+
+    // Focus highlighting (shared logic with base highlights)
+    // Returns the range to highlight for focus; expands to full term span
+    // if the token is part of a known multi-token term
+    QPair<int, int> getFocusRange(int tokenIndex) const;
+
+    // Find first token at or after a text position (for viewport-aware focus)
+    int findFirstTokenAtOrAfter(int pos) const;
+    // Find last token at or before a text position
+    int findLastTokenAtOrBefore(int pos) const;
+
 private:
     QString text;
     QString language;
     std::vector<TokenInfo> tokenBoundaries;
     std::vector<TermPosition> termPositions;
+    int focusedTokenIndex = -1;  // -1 means no focus
 
     // Helper methods
     void tokenizeText();

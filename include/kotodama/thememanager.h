@@ -31,6 +31,9 @@ enum class ThemeColor {
     PrimaryHover,
     PrimaryPressed,
 
+    // Focus highlight
+    Focus,
+
     // Term levels
     LevelRecognized,
     LevelLearning,
