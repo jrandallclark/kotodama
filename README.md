@@ -1,160 +1,98 @@
 # Kotodama
 
-A cross-platform language learning application built with Qt that helps you learn languages through reading texts with intelligent phrase matching and vocabulary tracking.
+A Qt-based desktop language-learning application with robust MVC architecture, trie-based phrase matching, and comprehensive testing.
 
-## Features
+**Tech Stack:** Qt 6.10.1, C++17, SQLite, Google Test 1.14.0, CMake 3.16+
 
-- **Text-based Learning**: Import and read texts in your target language
-- **Smart Phrase Recognition**: Advanced trie-based algorithm for matching multi-word phrases
-- **Vocabulary Management**: Track terms with learning levels (Recognized, Learning, Known, Well Known, Ignored)
-- **Import/Export Vocabulary**: Import vocabulary lists from any CSV file
-- **Intelligent Tokenization**: Language-specific text parsing for accurate word and phrase detection
-- **Persistent Progress**: SQLite database stores your texts and vocabulary
-- **Cross-Platform**: Runs on macOS, Windows, and Linux
-
-![Main Screen](images/mainscreen.png)
-![Text Reader](images/reader.png)
-
-## Installation
-
-Pre-built installers for Windows and macOS are available in the [release](release/) directory.
-
-## Prerequisites
-
-- **Qt**: Version 5.x or 6.x (developed with Qt 6.10.1)
-- **CMake**: Version 3.16 or higher
-- **C++ Compiler**: Supporting C++17 standard
-- **SQLite**: Included via Qt SQL module
-
-## Building
-
-### 1. Configure the Project
+## Quick Start
 
 ```bash
+# Configure
 cmake -B build -S .
-```
 
-### 2. Build
-
-```bash
+# Build
 cmake --build build
-```
 
-### 3. Run
-
-**macOS:**
-```bash
+# Run (macOS)
 open build/kotodama.app
-```
 
-**Linux/Windows:**
-```bash
+# Run (Linux / Windows)
 ./build/kotodama
 ```
 
-## Testing
-
-The project includes a comprehensive test suite using Google Test.
-
-### Run All Tests
+## Running Tests
 
 ```bash
+# All tests
 ./run_tests.sh
-```
 
-### Run Tests Manually
+# Or via CTest
+cd build && ctest | tail -30
 
-```bash
-cd build
-ctest
-```
-
-### Run Specific Test
-
-```bash
-cd build
-./tests/tst_tokenizer
+# Specific test binary
+cd build && ./tests/tst_tokenizer
 ```
 
 ## Architecture
 
-Kotodama follows clean architectural patterns:
+### MVC Pattern
 
-- **MVC Pattern**: Separation of UI (View), business logic (Model), and control flow
-- **Singleton Managers**: Centralized data management for database, library, and terms
-- **Trie Data Structure**: Efficient phrase matching for vocabulary recognition
+- **View:** UI classes render data and forward user actions. No business logic.
+- **Model:** Business logic classes provide data structures ready for display and enforce all rules.
+- **Controller:** Qt signals/slots connecting views to models.
 
-### Project Structure
+### Singleton Managers
+
+All data management is centralized in singletons:
+
+- `DatabaseManager` — SQLite persistence
+- `LibraryManager` — File import/export, UUID management
+- `TermManager` — In-memory trie + term cache
+- `LanguageManager` — Language configuration management
+- `ThemeManager` — Theme and appearance management
+- `BackupManager` — Backup and restore functionality
+- `AIManager` — AI integration management
+
+### Core Data Structures
+
+- **TrieNode** — Multi-way tree for efficient longest-match phrase recognition
+- **Tokenizer** — Regex-based text tokenization with language-specific patterns
+- **Term** — Struct with `TermLevel` enum (`Recognized`, `Learning`, `Known`, `WellKnown`, `Ignored`)
+
+## Project Structure
 
 ```
 kotodama/
-├── *.cpp/h              # Core application source files
-├── tests/               # Google Test suite
+├── src/                 # Implementation files (.cpp)
+├── include/kotodama/    # Header files (.h)
+├── tests/               # Google Test suite (10 test files)
+├── docs/                # User-facing documentation
+├── images/              # Screenshots and assets
+├── release/             # Pre-built binaries
+├── AGENTS.md            # Developer docs (conventions, patterns, troubleshooting)
 ├── CMakeLists.txt       # Build configuration
-└── CLAUDE.md            # Developer documentation
+└── LICENSE              # GPL v3
 ```
 
 ### Key Components
 
-- **UI Layer**: MainWindow, EbookViewer, dialogs for term editing and settings
-- **Business Logic**: Models for text management and analysis
-- **Data Management**: DatabaseManager, LibraryManager, TermManager
-- **Core Utilities**: Tokenizer, TrieNode, LanguageConfig
-
-## Development
-
-See [CLAUDE.md](CLAUDE.md) for detailed developer documentation including:
-- Code conventions and style guide
-- Testing patterns and best practices
-- Architecture details and design patterns
-- Build troubleshooting
-
-## Technology Stack
-
-- **Framework**: Qt 6.10.1 (compatible with Qt 5.x)
-- **Language**: C++17
-- **Database**: SQLite via Qt SQL
-- **Testing**: Google Test 1.14.0
-- **Build System**: CMake 3.16+
-
-## Version
-
-Current version: **0.1** (Early Development)
-
-## Planned Features
-
-The following features are planned for future releases:
-
-- **AI-Powered Definitions**: Automatic definition generation using AI
-- Additional language support and customization options
-- Enhanced statistics and progress tracking
-- Mobile platform support
+| Layer | Files |
+|-------|-------|
+| **UI (View)** | `mainwindow`, `ebookviewer`, `terminfopanel`, `textcard`, various dialogs |
+| **Business Logic (Model)** | `mainwindowmodel`, `ebookviewmodel` |
+| **Data Management** | `databasemanager`, `librarymanager`, `termmanager`, `languagemanager`, `thememanager`, `backupmanager`, `aimanager` |
+| **Core Utilities** | `tokenizer`, `trienode`, `languageconfig`, `progresscalculator`, `singleinstanceguard` |
 
 ## Contributing
 
-When contributing to Kotodama:
-
-1. Follow the MVC pattern - keep UI and business logic separated
-2. Write tests for new features
-3. Use Qt classes for cross-platform compatibility
-4. Maintain singleton pattern for manager classes
-5. See [CLAUDE.md](CLAUDE.md) for detailed coding conventions
-
-## Acknowledgments
-
-Kotodama is inspired by these excellent language learning tools:
-
-- [Foreign Language Text Reader](https://sourceforge.net/projects/foreign-language-text-reader/) - A tool for reading foreign language texts with vocabulary assistance
-- [Learning With Texts](https://sourceforge.net/projects/learning-with-texts/) - A web-based tool for learning languages through reading
+1. Read [`AGENTS.md`](AGENTS.md) for detailed conventions, architecture patterns, and build troubleshooting.
+2. Follow MVC separation — business logic belongs in models, not views.
+3. Use singleton pattern for manager classes.
+4. Write tests for new behavior.
+5. Use Qt types and patterns for cross-platform compatibility.
 
 ## License
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-### Qt Framework
-
-This application uses the Qt framework, which is available under the GNU Lesser General Public License (LGPL) version 3. For more information about Qt licensing, visit <https://www.qt.io/licensing/>.
+This application uses the Qt framework, available under the GNU Lesser General Public License (LGPL) version 3.
