@@ -29,13 +29,13 @@ set CMAKE_GENERATOR=
 
 REM Check for MinGW Qt installations first (more common for open source)
 for %%Q in (
-    "C:\Qt\6.10.1\mingw_64"
+    "C:\Qt\6.8.3\mingw_64"
     "C:\Qt\6.9.0\mingw_64"
     "C:\Qt\6.8.0\mingw_64"
     "C:\Qt\6.7.0\mingw_64"
     "C:\Qt\6.6.0\mingw_64"
     "C:\Qt\6.5.0\mingw_64"
-    "%USERPROFILE%\Qt\6.10.1\mingw_64"
+    "%USERPROFILE%\Qt\6.8.3\mingw_64"
     "%USERPROFILE%\Qt\6.9.0\mingw_64"
     "%USERPROFILE%\Qt\6.8.0\mingw_64"
 ) do (
@@ -48,13 +48,13 @@ for %%Q in (
 
 REM Check for MSVC Qt installations
 for %%Q in (
-    "C:\Qt\6.10.1\msvc2022_64"
+    "C:\Qt\6.8.3\msvc2022_64"
     "C:\Qt\6.9.0\msvc2022_64"
     "C:\Qt\6.8.0\msvc2022_64"
     "C:\Qt\6.7.0\msvc2022_64"
     "C:\Qt\6.6.0\msvc2022_64"
     "C:\Qt\6.5.0\msvc2022_64"
-    "%USERPROFILE%\Qt\6.10.1\msvc2022_64"
+    "%USERPROFILE%\Qt\6.8.3\msvc2022_64"
     "%USERPROFILE%\Qt\6.9.0\msvc2022_64"
     "%USERPROFILE%\Qt\6.8.0\msvc2022_64"
 ) do (
@@ -73,7 +73,7 @@ echo Please install Qt 6.x with MinGW or MSVC support:
 echo.
 echo   1. Download Qt Online Installer from: https://www.qt.io/download-qt-installer
 echo   2. Run the installer and sign in (free account required)
-echo   3. Select "Qt 6.x" (e.g., Qt 6.10.1)
+echo   3. Select "Qt 6.x" (e.g., Qt 6.8.3)
 echo   4. Under the Qt version, select one of:
 echo      - MinGW 64-bit (recommended, no Visual Studio needed)
 echo      - MSVC 2022 64-bit (requires Visual Studio)

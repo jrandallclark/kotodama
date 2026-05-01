@@ -2,7 +2,7 @@
 
 A Qt-based desktop language-learning application with robust MVC architecture, trie-based phrase matching, and comprehensive testing.
 
-**Tech Stack:** Qt 6.10.1, C++17, SQLite, Google Test 1.14.0, CMake 3.16+
+**Tech Stack:** Qt 6.8.3, C++17, SQLite, Google Test 1.14.0, CMake 3.16+
 
 ## Quick Start
 

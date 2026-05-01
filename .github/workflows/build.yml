@@ -1,0 +1,368 @@
+name: Build Kotodama
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        type: string
+        required: true
+      dev_build:
+        description: 'Build as development version'
+        type: boolean
+        default: false
+
+env:
+  # Use a Qt version known to be available via install-qt-action.
+  # aqtinstall 3.3.0 supports up to Qt 6.7.x reliably.
+  QT_VERSION: '6.7.3'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # macOS Builds
+  # ---------------------------------------------------------------------------
+  build-macos:
+    runs-on: macos-latest
+    env:
+      MACOS_ARCH: arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: clang_64
+          cache: true
+
+      - name: Install dependencies (MeCab)
+        run: brew install mecab mecab-ipadic
+
+      - name: Configure CMake
+        run: |
+          MECAB_PREFIX=$(brew --prefix mecab)
+          echo "MeCab prefix: $MECAB_PREFIX"
+          ls -l "$MECAB_PREFIX/lib/" || true
+          ls -l "$MECAB_PREFIX/include/" || true
+          cmake -B build -S . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDEV_BUILD=${{ github.event.inputs.dev_build == 'true' && 'ON' || 'OFF' }} \
+            -DCMAKE_OSX_ARCHITECTURES=$MACOS_ARCH \
+            -DMECAB_INCLUDE_DIR="$MECAB_PREFIX/include" \
+            -DMECAB_LIBRARY="$MECAB_PREFIX/lib/libmecab.dylib"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Run tests
+        run: |
+          cd build
+          ctest --output-on-failure -C Release
+
+      - name: Deploy Qt dependencies (macdeployqt)
+        run: |
+          cd build
+          macdeployqt kotodama.app
+
+      - name: Bundle MeCab runtime
+        run: |
+          # IPA dictionary is staged into Resources/dic by CMake POST_BUILD.
+          # This step only handles the dylib + relink.
+          APP="build/kotodama.app"
+          MACOS_DIR="$APP/Contents/MacOS"
+          FRAMEWORKS_DIR="$APP/Contents/Frameworks"
+          MECAB_PREFIX=$(brew --prefix mecab)
+
+          mkdir -p "$FRAMEWORKS_DIR"
+          cp "$MECAB_PREFIX/lib/libmecab.dylib" "$FRAMEWORKS_DIR/"
+
+          install_name_tool -change \
+            "$MECAB_PREFIX/lib/libmecab.dylib" \
+            "@executable_path/../Frameworks/libmecab.dylib" \
+            "$MACOS_DIR/kotodama"
+
+      - name: Ad-hoc codesign
+        run: |
+          codesign --force --deep --sign - build/kotodama.app
+          codesign --verify --verbose build/kotodama.app
+
+      - name: Create DMG
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION=${VERSION#v}
+          [[ -z "$VERSION" ]] && VERSION=0.0.0
+          DMG="build/kotodama-${VERSION}-macos-${MACOS_ARCH}.dmg"
+          hdiutil create -volname "Kotodama" \
+            -srcfolder build/kotodama.app \
+            -ov -format UDZO "$DMG"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kotodama-macos-arm64
+          path: build/kotodama-*.dmg
+
+  # ---------------------------------------------------------------------------
+  # Windows Build
+  # ---------------------------------------------------------------------------
+  build-windows:
+    runs-on: windows-latest
+    env:
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2019_64
+          cache: true
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+
+      - name: Install MeCab (vcpkg)
+        shell: pwsh
+        run: |
+          # Use the standalone vcpkg (C:\vcpkg), not the VS-bundled one
+          $env:VCPKG_ROOT = "C:\vcpkg"
+          $env:VCPKG_DEFAULT_TRIPLET = "x64-windows"
+          # Pin vcpkg to a known commit so port versions don't drift between builds
+          $VCPKG_COMMIT = "3ee3e59210d275865489c998e0173b3ce37301b7"
+          git -C C:\vcpkg fetch --depth 1 origin $VCPKG_COMMIT
+          git -C C:\vcpkg checkout $VCPKG_COMMIT
+          & C:\vcpkg\bootstrap-vcpkg.bat
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }
+          vcpkg install mecab
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "FATAL: vcpkg install mecab failed."
+            exit 1
+          }
+
+      - name: Install IPA dictionary (pip ipadic)
+        shell: pwsh
+        run: |
+          # Pre-compiled UTF-8 binary IPA dictionary ships in the `ipadic`
+          # PyPI wheel. Pinned version → deterministic bytes. MeCab binary
+          # dict is endian-sensitive but identical across little-endian x64.
+          pip install --no-deps --disable-pip-version-check ipadic==1.0.0
+          if ($LASTEXITCODE -ne 0) { throw "pip install ipadic failed" }
+          $dicSrc = python -c "import ipadic, sys; sys.stdout.write(ipadic.DICDIR)"
+          if (-not (Test-Path "$dicSrc\sys.dic")) {
+            throw "sys.dic not found in ipadic package at $dicSrc"
+          }
+          # Expose to subsequent steps so CMake stages it and ctest finds it.
+          "KOTODAMA_IPADIC_DIR=$dicSrc" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          cmake -B build -S . `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DDEV_BUILD=${{ github.event.inputs.dev_build == 'true' && 'ON' || 'OFF' }} `
+            -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+            -DKOTODAMA_IPADIC_DIR="$env:KOTODAMA_IPADIC_DIR"
+
+      - name: Build
+        shell: cmd
+        run: cmake --build build --config Release --parallel
+
+      - name: Run tests
+        shell: cmd
+        run: |
+          set PATH=C:\vcpkg\installed\x64-windows\bin;%PATH%
+          cd build
+          ctest --output-on-failure -C Release
+
+      - name: Bundle MeCab runtime DLL
+        shell: pwsh
+        run: |
+          # IPA dictionary is staged into build\Release\dic by CMake POST_BUILD.
+          # This step only copies the runtime DLL.
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin\mecab.dll" build\Release
+
+      - name: Deploy Qt dependencies (windeployqt)
+        shell: cmd
+        run: |
+          windeployqt build\Release\kotodama.exe --release --no-translations
+
+      - name: Stage release files
+        shell: pwsh
+        run: |
+          # Stage release files into a clean dir, excluding debug symbols and
+          # build intermediates. Used by both the portable ZIP and the NSIS
+          # installer so they ship identical contents.
+          $stage = "build\package"
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          $excludeExt = @('.pdb', '.ilk', '.exp', '.lib', '.obj', '.iobj', '.ipdb')
+          Get-ChildItem -Path build\Release -Recurse -File |
+            Where-Object { $excludeExt -notcontains $_.Extension.ToLower() } |
+            ForEach-Object {
+              $rel = $_.FullName.Substring((Resolve-Path build\Release).Path.Length + 1)
+              $dest = Join-Path $stage $rel
+              New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+              Copy-Item $_.FullName $dest
+            }
+
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          $VERSION = "${{ github.event.inputs.version }}" -replace '^v',''
+          if ([string]::IsNullOrEmpty($VERSION)) {
+            $VERSION = $env:GITHUB_REF_NAME -replace '^v',''
+          }
+          if ([string]::IsNullOrEmpty($VERSION)) { $VERSION = '0.0.0' }
+          "KOTODAMA_VERSION=$VERSION" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          $ZIP = "build\kotodama-${env:KOTODAMA_VERSION}-windows-x86_64-portable.zip"
+          Compress-Archive -Path "build\package\*" -DestinationPath $ZIP
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          $nsi = "build\installer.nsi"
+          $version = $env:KOTODAMA_VERSION
+          @"
+          !define PRODUCT_NAME "Kotodama"
+          !define PRODUCT_VERSION "$version"
+          !define PRODUCT_PUBLISHER "Kotodama"
+          !define INSTALL_DIR "`$PROGRAMFILES64\Kotodama"
+
+          Name "`${PRODUCT_NAME} `${PRODUCT_VERSION}"
+          OutFile "kotodama-$version-windows-x86_64-installer.exe"
+          InstallDir "`${INSTALL_DIR}"
+          RequestExecutionLevel admin
+
+          Page directory
+          Page instfiles
+          UninstPage uninstConfirm
+          UninstPage instfiles
+
+          Section "Install"
+            SetOutPath "`$INSTDIR"
+            File /r "package\*.*"
+
+            CreateDirectory "`$SMPROGRAMS\Kotodama"
+            CreateShortcut "`$SMPROGRAMS\Kotodama\Kotodama.lnk" "`$INSTDIR\kotodama.exe"
+            CreateShortcut "`$DESKTOP\Kotodama.lnk" "`$INSTDIR\kotodama.exe"
+
+            WriteUninstaller "`$INSTDIR\Uninstall.exe"
+            CreateShortcut "`$SMPROGRAMS\Kotodama\Uninstall.lnk" "`$INSTDIR\Uninstall.exe"
+
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Kotodama" "DisplayName" "`${PRODUCT_NAME}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Kotodama" "DisplayVersion" "`${PRODUCT_VERSION}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Kotodama" "Publisher" "`${PRODUCT_PUBLISHER}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Kotodama" "InstallLocation" "`$INSTDIR"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Kotodama" "UninstallString" "`$INSTDIR\Uninstall.exe"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Kotodama" "DisplayIcon" "`$INSTDIR\kotodama.exe"
+            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Kotodama" "NoModify" 1
+            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Kotodama" "NoRepair" 1
+          SectionEnd
+
+          Section "Uninstall"
+            Delete "`$INSTDIR\Uninstall.exe"
+            Delete "`$SMPROGRAMS\Kotodama\*.lnk"
+            Delete "`$DESKTOP\Kotodama.lnk"
+            RMDir "`$SMPROGRAMS\Kotodama"
+            RMDir /r "`$INSTDIR"
+            DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Kotodama"
+          SectionEnd
+          "@ | Out-File -FilePath $nsi -Encoding ascii
+
+          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            $makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
+          }
+          if (-not $makensis) { throw "makensis not found on runner" }
+          Push-Location build
+          try {
+            & $makensis installer.nsi
+            if ($LASTEXITCODE -ne 0) { throw "NSIS installer build failed" }
+          } finally { Pop-Location }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kotodama-windows-x86_64
+          path: |
+            build/kotodama-*-windows-x86_64-portable.zip
+            build/kotodama-*-windows-x86_64-installer.exe
+
+  # ---------------------------------------------------------------------------
+  # Linux Build (Flatpak)
+  # ---------------------------------------------------------------------------
+  build-linux:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.7
+      options: --privileged
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@401fe28a8384095fc1531b9d320b292f0ee45adb # v6.7
+        with:
+          bundle: kotodama.flatpak
+          manifest-path: com.jeremyrclark.kotodama.yml
+          cache-key: flatpak-builder-${{ hashFiles('com.jeremyrclark.kotodama.yml') }}
+
+      - name: Rename artifact
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION=${VERSION#v}
+          [[ -z "$VERSION" ]] && VERSION=0.0.0
+          mv kotodama.flatpak "kotodama-${VERSION}-linux-x86_64.flatpak"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kotodama-linux-x86_64
+          path: kotodama-*.flatpak
+
+  # ---------------------------------------------------------------------------
+  # Release (attach artifacts to GitHub Release)
+  # ---------------------------------------------------------------------------
+  release:
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lah artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          files: artifacts/*
+          draft: true
+          generate_release_notes: true

@@ -1,13 +1,60 @@
 #include "kotodama/mecabtokenizer.h"
+#include <QByteArray>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QIODevice>
 #include <QList>
 #include <QString>
-
-#ifdef HAVE_MECAB
+#include <cstdlib>
 #include <mecab.h>
+#include <stdexcept>
+
+namespace {
+QString resolvedDicPath()
+{
+    // Override hook: tests and dev runs can point at a dict outside the
+    // app bundle (e.g. the staged dict in the build dir).
+    const QByteArray override = qgetenv("KOTODAMA_MECAB_DICDIR");
+    if (!override.isEmpty()) {
+        return QDir(QString::fromLocal8Bit(override)).absolutePath();
+    }
+#ifdef Q_OS_MACOS
+    return QDir(QCoreApplication::applicationDirPath() + "/../Resources/dic").absolutePath();
+#else
+    return QCoreApplication::applicationDirPath() + "/dic";
+#endif
+}
+}
 
 struct MeCabTokenizer::Impl {
     MeCab::Tagger* tagger = nullptr;
-    Impl() { tagger = MeCab::createTagger(""); }
+    Impl() {
+        QString dictDir = resolvedDicPath();
+
+        // MeCab requires a usable mecabrc; system-wide lookup is fragile
+        // (especially on Windows where vcpkg's default rc path may not be
+        // installed). Synthesize a transient one pointing at our dict.
+        QString rcPath = QDir::temp().absoluteFilePath("kotodama-mecabrc");
+        QFile rc(rcPath);
+        if (rc.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            rc.write("dicdir = ");
+            rc.write(dictDir.toUtf8());
+            rc.write("\n");
+            rc.close();
+        }
+        qputenv("MECABRC", rcPath.toUtf8());
+
+        std::string dicPath = dictDir.toStdString();
+        const char* argv[] = { "mecab", "-d", dicPath.c_str() };
+        tagger = MeCab::createTagger(3, const_cast<char**>(argv));
+        if (!tagger) {
+            std::string err = MeCab::getLastError() ? MeCab::getLastError() : "(no error message)";
+            throw std::runtime_error(
+                "MeCab tagger creation failed. Dictionary path: " + dicPath
+                + ". rcfile: " + rcPath.toStdString() + ". MeCab error: " + err);
+        }
+    }
     ~Impl() { delete tagger; }
 };
 
@@ -71,22 +118,6 @@ std::vector<TokenResult> MeCabTokenizer::tokenize(const QString& text)
 
 bool MeCabTokenizer::isAvailable() const { return d && d->tagger != nullptr; }
 
-#else
-
-// Stub when MeCab is not available
-struct MeCabTokenizer::Impl {
-    // Empty stub — ensures unique_ptr<Impl> destructor compiles
-};
-
-std::vector<TokenResult> MeCabTokenizer::tokenize(const QString&) { return {}; }
-bool MeCabTokenizer::isAvailable() const { return false; }
-
-#endif
-
-MeCabTokenizer::MeCabTokenizer()
-#ifdef HAVE_MECAB
-    : d(std::make_unique<Impl>())
-#endif
-{}
+MeCabTokenizer::MeCabTokenizer() : d(std::make_unique<Impl>()) {}
 
 MeCabTokenizer::~MeCabTokenizer() = default;

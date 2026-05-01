@@ -29,8 +29,7 @@ TEST(TokenizerTest, CreateJapaneseReturnsTokenizer)
     auto tok = Tokenizer::createJapanese();
     ASSERT_NE(tok, nullptr);
     EXPECT_TRUE(tok->isAvailable());
-    // Backend is either mecab (if installed) or regex fallback
-    EXPECT_THAT(tok->backendName(), AnyOf("mecab", "regex"));
+    EXPECT_EQ(tok->backendName(), "mecab");
 }
 
 // Whitespace-based tokenization (using \S+ pattern)
@@ -294,7 +293,7 @@ TEST(TokenizerTest, JapaneseCharBasedPunctuationExcluded)
     EXPECT_EQ(results.size(), 10u);
 }
 
-// createJapanese() (MeCab or fallback) must also exclude punctuation
+// createJapanese() (MeCab) must exclude punctuation
 TEST(TokenizerTest, JapaneseFactoryPunctuationFiltered)
 {
     auto tok = Tokenizer::createJapanese();
@@ -337,7 +336,6 @@ TEST(TokenizerTest, JapaneseMixedScriptConsecutivePositions)
     }
 }
 
-// Extended kanji range (U+3400–U+4DBF) in createJapanese fallback pattern
 TEST(TokenizerTest, JapaneseFactoryPositionsDoNotExceedLength)
 {
     auto tok = Tokenizer::createJapanese();

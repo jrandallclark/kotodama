@@ -1,0 +1,42 @@
+app-id: com.jeremyrclark.kotodama
+runtime: org.kde.Platform
+runtime-version: '6.7'
+sdk: org.kde.Sdk
+command: kotodama
+finish-args:
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=xdg-documents
+modules:
+  - name: mecab
+    buildsystem: autotools
+    sources:
+      - type: archive
+        url: https://ftp.debian.org/debian/pool/main/m/mecab/mecab_0.996.orig.tar.gz
+        sha256: e073325783135b72e666145c781bb48fada583d5224fb2490fb6c1403ba69c59
+
+  - name: mecab-ipadic
+    buildsystem: autotools
+    config-opts:
+      - --with-dicdir=/app/lib/mecab/dic/ipadic
+    sources:
+      - type: archive
+        url: https://ftp.debian.org/debian/pool/main/m/mecab-ipadic/mecab-ipadic_2.7.0-20070801+main.orig.tar.gz
+        sha256: b62f527d881c504576baed9c6ef6561554658b175ce6ae0096a60307e49e3523
+
+  - name: kotodama
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DDEV_BUILD=OFF
+      - -DBUILD_TESTS=OFF
+      - -DKOTODAMA_IPADIC_DIR=/app/lib/mecab/dic/ipadic
+    post-install:
+      - install -Dm644 com.jeremyrclark.kotodama.desktop /app/share/applications/com.jeremyrclark.kotodama.desktop
+      - install -Dm644 resources/icons/icon_256x256.png /app/share/icons/hicolor/256x256/apps/com.jeremyrclark.kotodama.png
+      - install -Dm644 com.jeremyrclark.kotodama.svg /app/share/icons/hicolor/scalable/apps/com.jeremyrclark.kotodama.svg
+    sources:
+      - type: dir
+        path: .

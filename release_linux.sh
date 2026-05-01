@@ -10,7 +10,7 @@ APP_NAME="kotodama"
 VERSION="0.1"
 BUILD_DIR="build"
 RELEASE_DIR="release"
-QT_PATH="${HOME}/Qt/6.10.1/gcc_64"  # Adjust for your Qt installation
+QT_PATH="${HOME}/Qt/6.8.3/gcc_64"  # Adjust for your Qt installation
 QMAKE="${QT_PATH}/bin/qmake"
 
 # AppImage tools

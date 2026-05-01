@@ -9,7 +9,7 @@ echo ""
 
 # Configure
 echo "[1/3] Configuring CMake..."
-cmake -B build -S .
+cmake -B build -S . -DDEV_BUILD=ON
 
 # Build
 echo ""

@@ -4,7 +4,7 @@ A Qt-based language learning application with robust MVC architecture, trie-base
 
 ## Project Info
 
-- **Tech Stack:** Qt 6.10.1, C++17, SQLite, Google Test 1.14.0
+- **Tech Stack:** Qt 6.8.3, C++17, SQLite, Google Test 1.14.0
 - **Platform:** Cross-platform (macOS/Windows/Linux) via Qt framework
 - **Build System:** CMake 3.16+
 - **Qt Modules:** Widgets, SQL, Network, LinguistTools

@@ -140,7 +140,6 @@ void SingleInstanceGuard::onNewConnection()
         return;
     }
 
-    // Lambda to handle reading data
     auto readData = [this, clientSocket]() {
         QByteArray data = clientSocket->readAll();
 
@@ -153,10 +152,8 @@ void SingleInstanceGuard::onNewConnection()
         clientSocket->deleteLater();
     };
 
-    // Connect readyRead for future data
     connect(clientSocket, &QLocalSocket::readyRead, this, readData);
 
-    // Check if data is already available
     if (clientSocket->bytesAvailable() > 0) {
         readData();
     }

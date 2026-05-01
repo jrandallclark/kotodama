@@ -29,6 +29,7 @@ qrc_*.cpp
 Thumbs.db
 *.res
 *.rc
+!kotodama.rc
 /.qmake.cache
 /.qmake.stash
 

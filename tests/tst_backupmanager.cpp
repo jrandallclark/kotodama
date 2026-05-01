@@ -9,12 +9,24 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QSqlQuery>
 
 class BackupManagerTest : public ::testing::Test {
 protected:
     void SetUp() override {
         QStandardPaths::setTestModeEnabled(true);
         DatabaseManager::instance().initialize();
+        LibraryManager::instance().initialize();
+
+        // Clear stale DB state from prior test processes (Windows can't
+        // unlink open SQLite files in TearDown, so on-disk data persists).
+        QSqlQuery cleanup(DatabaseManager::instance().database());
+        cleanup.exec("DELETE FROM terms");
+        cleanup.exec("DELETE FROM texts");
+        cleanup.exec("DELETE FROM user_languages");
+
+        // Remove any leftover text files from prior runs
+        QDir(LibraryManager::instance().getLibraryPath() + "/texts").removeRecursively();
         LibraryManager::instance().initialize();
 
         tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)

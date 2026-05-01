@@ -4,6 +4,7 @@
 #include "kotodama/singleinstanceguard.h"
 
 #include <QApplication>
+#include <QIcon>
 #include <QLocale>
 #include <QTranslator>
 #include <QMessageBox>
@@ -12,6 +13,8 @@
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+
+    a.setWindowIcon(QIcon(":/icons/icon_256x256.png"));
 
     // Set application metadata for QSettings and QLockFile
     // Dev builds use separate data directories to avoid conflicts with release version

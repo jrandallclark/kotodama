@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Kotodama
+GenericName=Language Learning Tool
+Comment=Japanese vocabulary flashcards and study tools
+Exec=kotodama
+Icon=com.jeremyrclark.kotodama
+Type=Application
+Categories=Education;Languages;
+Terminal=false
+StartupNotify=true
+Keywords=japanese;language;learning;vocabulary;

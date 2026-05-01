@@ -8,23 +8,10 @@ TEST(MeCabTokenizerTest, NameIsMecab)
     EXPECT_EQ(tokenizer.name(), "mecab");
 }
 
-TEST(MeCabTokenizerTest, UnavailableReturnsEmpty)
-{
-    MeCabTokenizer tokenizer;
-    if (tokenizer.isAvailable()) {
-        GTEST_SKIP() << "MeCab is installed — skipping unavailable stub test";
-    }
-    EXPECT_FALSE(tokenizer.isAvailable());
-    EXPECT_TRUE(tokenizer.tokenize("test").empty());
-    EXPECT_TRUE(tokenizer.tokenize("こんにちは").empty());
-}
-
 TEST(MeCabTokenizerTest, AvailableOnSystem)
 {
     MeCabTokenizer tokenizer;
-    if (!tokenizer.isAvailable()) {
-        GTEST_SKIP() << "MeCab not installed";
-    }
+    ASSERT_TRUE(tokenizer.isAvailable()) << "MeCab is hard-required";
 
     auto tokens = tokenizer.tokenize("太郎は本を読んだ");
     EXPECT_GT(tokens.size(), 3u);
@@ -41,9 +28,6 @@ TEST(MeCabTokenizerTest, AvailableOnSystem)
 TEST(MeCabTokenizerTest, AvailablePositionsCoverInput)
 {
     MeCabTokenizer tokenizer;
-    if (!tokenizer.isAvailable()) {
-        GTEST_SKIP() << "MeCab not installed";
-    }
 
     QString input = "日本語の形態素解析";
     auto tokens = tokenizer.tokenize(input);
@@ -56,9 +40,6 @@ TEST(MeCabTokenizerTest, AvailablePositionsCoverInput)
 TEST(MeCabTokenizerTest, AvailableEmptyStringReturnsEmpty)
 {
     MeCabTokenizer tokenizer;
-    if (!tokenizer.isAvailable()) {
-        GTEST_SKIP() << "MeCab not installed";
-    }
     EXPECT_TRUE(tokenizer.tokenize("").empty());
 }
 
@@ -69,9 +50,6 @@ TEST(MeCabTokenizerTest, AvailableEmptyStringReturnsEmpty)
 TEST(MeCabTokenizerTest, PunctuationNotInTokens)
 {
     MeCabTokenizer tokenizer;
-    if (!tokenizer.isAvailable()) {
-        GTEST_SKIP() << "MeCab not installed";
-    }
 
     // 。「」、〟 are Japanese punctuation — all must be filtered
     auto tokens = tokenizer.tokenize("こんにちは。さようなら。");
@@ -89,9 +67,6 @@ TEST(MeCabTokenizerTest, PunctuationNotInTokens)
 TEST(MeCabTokenizerTest, DoubleQuotePunctuationFiltered)
 {
     MeCabTokenizer tokenizer;
-    if (!tokenizer.isAvailable()) {
-        GTEST_SKIP() << "MeCab not installed";
-    }
 
     // 〟 (U+301F) and 。 were the specific chars reported as leaking through
     auto tokens = tokenizer.tokenize("〟太郎は読んだ。");
@@ -107,9 +82,6 @@ TEST(MeCabTokenizerTest, DoubleQuotePunctuationFiltered)
 TEST(MeCabTokenizerTest, WhitespaceNotInTokens)
 {
     MeCabTokenizer tokenizer;
-    if (!tokenizer.isAvailable()) {
-        GTEST_SKIP() << "MeCab not installed";
-    }
 
     auto tokens = tokenizer.tokenize("こんにちは さようなら");
 
@@ -127,9 +99,6 @@ TEST(MeCabTokenizerTest, WhitespaceNotInTokens)
 TEST(MeCabTokenizerTest, PositionsAreCharOffsets)
 {
     MeCabTokenizer tokenizer;
-    if (!tokenizer.isAvailable()) {
-        GTEST_SKIP() << "MeCab not installed";
-    }
 
     // "あいう" — 3 chars, each 3 bytes in UTF-8.
     // Byte offsets would give endPos=9; char offsets give endPos=3.
@@ -144,9 +113,6 @@ TEST(MeCabTokenizerTest, PositionsAreCharOffsets)
 TEST(MeCabTokenizerTest, PositionsDoNotExceedInputLength)
 {
     MeCabTokenizer tokenizer;
-    if (!tokenizer.isAvailable()) {
-        GTEST_SKIP() << "MeCab not installed";
-    }
 
     QString input = "日本語の形態素解析テスト";
     auto tokens = tokenizer.tokenize(input);
@@ -166,9 +132,6 @@ TEST(MeCabTokenizerTest, PositionsDoNotExceedInputLength)
 TEST(MeCabTokenizerTest, ContextChangesTokenization)
 {
     MeCabTokenizer tokenizer;
-    if (!tokenizer.isAvailable()) {
-        GTEST_SKIP() << "MeCab not installed";
-    }
 
     // MeCab is context-sensitive: the same substring can tokenize differently
     // depending on surrounding text. This test documents that the char-based

@@ -32,12 +32,5 @@ std::unique_ptr<Tokenizer> Tokenizer::createRegex(
 
 std::unique_ptr<Tokenizer> Tokenizer::createJapanese()
 {
-    auto mecab = std::make_unique<MeCabTokenizer>();
-    if (mecab->isAvailable()) {
-        return std::make_unique<Tokenizer>(std::move(mecab));
-    }
-    // Fallback: regex with character splitting for CJK script ranges
-    QString jaPattern = "[\\x{3005}\\x{3040}-\\x{309F}\\x{30A0}-\\x{30FF}\\x{4E00}-\\x{9FFF}"
-                        "\\x{3400}-\\x{4DBF}\\x{F900}-\\x{FAFF}\\x{FF66}-\\x{FF9F}]+";
-    return createRegex(jaPattern, true);
+    return std::make_unique<Tokenizer>(std::make_unique<MeCabTokenizer>());
 }

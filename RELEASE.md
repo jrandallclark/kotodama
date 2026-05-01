@@ -5,19 +5,19 @@ This guide explains how to build installers for macOS, Windows, and Linux.
 ## Prerequisites by Platform
 
 ### macOS
-- Qt 6.10.1 (or compatible)
+- Qt 6.8.3 (or compatible)
 - CMake 3.16+
 - Xcode Command Line Tools
 - (Optional) Apple Developer Account for code signing
 
 ### Windows
-- Qt 6.10.1 MSVC build
+- Qt 6.8.3 MSVC build
 - CMake 3.16+
 - Visual Studio 2022 (or 2019)
 - (Optional) NSIS for installer creation: https://nsis.sourceforge.io/Download
 
 ### Linux
-- Qt 6.10.1 GCC build
+- Qt 6.8.3 GCC build
 - CMake 3.16+
 - GCC/G++
 - wget (for downloading AppImage tools)
@@ -74,10 +74,10 @@ The release scripts will auto-detect Qt if `qmake` is in your PATH. Alternativel
 **Using environment variable:**
 ```bash
 # macOS/Linux
-QT_PATH=/path/to/Qt/6.10.1/macos ./release_macos.sh
+QT_PATH=/path/to/Qt/6.8.3/macos ./release_macos.sh
 
 # Windows
-set QT_PATH=C:\Qt\6.10.1\msvc2022_64
+set QT_PATH=C:\Qt\6.8.3\msvc2022_64
 release_windows.bat
 ```
 
