@@ -1,6 +1,6 @@
 #include "kotodama/mecabtokenizer.h"
+#include "kotodama/languagemodulemanager.h"
 #include <QByteArray>
-#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QIODevice>
@@ -14,16 +14,15 @@ namespace {
 QString resolvedDicPath()
 {
     // Override hook: tests and dev runs can point at a dict outside the
-    // app bundle (e.g. the staged dict in the build dir).
+    // user's data dir (e.g. the staged dict in the build dir).
     const QByteArray override = qgetenv("KOTODAMA_MECAB_DICDIR");
     if (!override.isEmpty()) {
         return QDir(QString::fromLocal8Bit(override)).absolutePath();
     }
-#ifdef Q_OS_MACOS
-    return QDir(QCoreApplication::applicationDirPath() + "/../Resources/dic").absolutePath();
-#else
-    return QCoreApplication::applicationDirPath() + "/dic";
-#endif
+    // Module is downloaded on demand. The Language Manager UI prevents
+    // reaching this code path before the module is installed, so a
+    // missing dict here is a programmer error.
+    return QDir(LanguageModuleManager::moduleDictPathFor("ja")).absolutePath();
 }
 }
 

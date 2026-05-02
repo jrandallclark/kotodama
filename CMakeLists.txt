@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(kotodama VERSION 0.1 LANGUAGES CXX)
+project(kotodama VERSION 0.1 LANGUAGES C CXX)
 
 # Option to build as dev version (uses separate data directories)
 option(DEV_BUILD "Build as development version with separate data directory" ON)
@@ -8,9 +8,10 @@ option(DEV_BUILD "Build as development version with separate data directory" ON)
 # Option to build tests (disabled for sandboxed builds like Flatpak)
 option(BUILD_TESTS "Build the test suite" ON)
 
+include(FetchContent)
+
 if(BUILD_TESTS)
   # Google Test setup
-  include(FetchContent)
   FetchContent_Declare(
     googletest
     URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
@@ -20,6 +21,47 @@ if(BUILD_TESTS)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(googletest)
 endif()
+
+# miniz: single-file zip extraction library used by LanguageModuleManager
+# to unpack downloaded language support modules.
+# miniz: pulled either from a vendored copy at third_party/miniz (used by
+# sandboxed builds like Flatpak that have no network at configure time) or
+# downloaded via FetchContent. The vendored copy is populated by the
+# Flatpak manifest as a separate `archive` source.
+if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/miniz/miniz.c")
+    set(_miniz_dir "${CMAKE_SOURCE_DIR}/third_party/miniz")
+    message(STATUS "miniz: using vendored copy at ${_miniz_dir}")
+else()
+    FetchContent_Declare(
+      miniz
+      GIT_REPOSITORY https://github.com/richgel999/miniz.git
+      GIT_TAG 3.0.2
+      GIT_SHALLOW TRUE
+    )
+    FetchContent_GetProperties(miniz)
+    if(NOT miniz_POPULATED)
+      FetchContent_Populate(miniz)
+    endif()
+    set(_miniz_dir "${miniz_SOURCE_DIR}")
+    message(STATUS "miniz: fetched via FetchContent at ${_miniz_dir}")
+endif()
+# miniz.h includes a generated miniz_export.h which is normally produced
+# by miniz's own CMake build. Synthesize a stub for static linkage.
+set(_miniz_stub_dir "${CMAKE_BINARY_DIR}/miniz_stub")
+file(MAKE_DIRECTORY "${_miniz_stub_dir}")
+file(WRITE "${_miniz_stub_dir}/miniz_export.h"
+     "#ifndef MINIZ_EXPORT_H\n#define MINIZ_EXPORT_H\n#define MINIZ_EXPORT\n#endif\n")
+
+# The repo ships the 4 component files separately; amalgamation requires
+# running their build script. Easier to just compile all four.
+add_library(kotodama_miniz STATIC
+    ${_miniz_dir}/miniz.c
+    ${_miniz_dir}/miniz_tdef.c
+    ${_miniz_dir}/miniz_tinfl.c
+    ${_miniz_dir}/miniz_zip.c
+)
+target_include_directories(kotodama_miniz PUBLIC ${_miniz_dir} "${_miniz_stub_dir}")
+set_property(TARGET kotodama_miniz PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -127,6 +169,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         include/kotodama/progresscalculator.h src/progresscalculator.cpp
         include/kotodama/singleinstanceguard.h src/singleinstanceguard.cpp
         include/kotodama/aimanager.h src/aimanager.cpp
+        include/kotodama/languagemodulemanager.h src/languagemodulemanager.cpp
         include/kotodama/backupmanager.h src/backupmanager.cpp
         include/kotodama/constants.h
     )
@@ -153,16 +196,17 @@ else()
     qt5_create_translation(QM_FILES ${CMAKE_SOURCE_DIR} ${TS_FILES})
 endif()
 
-target_link_libraries(kotodama PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Sql Qt${QT_VERSION_MAJOR}::Network)
+target_link_libraries(kotodama PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Sql Qt${QT_VERSION_MAJOR}::Network kotodama_miniz)
 
 target_include_directories(kotodama PRIVATE ${MECAB_INCLUDE_DIRS})
 target_link_libraries(kotodama PRIVATE ${MECAB_LIBRARIES})
 
 # ----------------------------------------------------------------------------
-# Stage MeCab IPA dictionary into the build output so the app finds it.
-# MeCabTokenizer hard-requires the dict at <app>/dic (or Resources/dic on mac).
-# CI workflows also bundle the dict — this block makes local dev builds work
-# without re-running the workflow's bundle step.
+# Locate the MeCab IPA dictionary for *test runs only*. The dict is no longer
+# bundled with the installed app — it's downloaded on demand at runtime by
+# LanguageModuleManager into <AppDataLocation>/modules/ja/dic/. Tests still
+# need a dict though, and they read it via the KOTODAMA_MECAB_DICDIR env var
+# (set in the test target ENVIRONMENT below).
 # ----------------------------------------------------------------------------
 if(NOT KOTODAMA_IPADIC_DIR)
     if(APPLE)
@@ -190,31 +234,10 @@ if(NOT KOTODAMA_IPADIC_DIR)
 endif()
 
 if(KOTODAMA_IPADIC_DIR AND EXISTS "${KOTODAMA_IPADIC_DIR}/sys.dic")
-    message(STATUS "MeCab IPA dict: ${KOTODAMA_IPADIC_DIR}")
-    if(APPLE)
-        set(_dic_dest "$<TARGET_BUNDLE_CONTENT_DIR:kotodama>/Resources/dic")
-    else()
-        set(_dic_dest "$<TARGET_FILE_DIR:kotodama>/dic")
-    endif()
-    # Brew's dict files are mode 0444 (read-only). copy_directory preserves
-    # perms, so a re-run can't overwrite the staged copy. Clear the dest
-    # first to make rebuilds idempotent.
-    add_custom_command(TARGET kotodama POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E remove_directory "${_dic_dest}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${_dic_dest}"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory "${KOTODAMA_IPADIC_DIR}" "${_dic_dest}"
-        COMMENT "Staging MeCab IPA dictionary -> ${_dic_dest}"
-    )
-    # Install rule: ship the dict alongside the binary so installed apps
-    # (e.g. Flatpak) find it at <bindir>/dic. macOS uses MACOSX_BUNDLE
-    # install which packs Resources/dic via the POST_BUILD staging.
-    if(NOT APPLE)
-        install(DIRECTORY "${KOTODAMA_IPADIC_DIR}/"
-                DESTINATION "${CMAKE_INSTALL_BINDIR}/dic")
-    endif()
-else()
+    message(STATUS "MeCab IPA dict (tests only): ${KOTODAMA_IPADIC_DIR}")
+elseif(BUILD_TESTS)
     message(WARNING
-        "MeCab IPA dictionary not found. App will fail at startup. "
+        "MeCab IPA dictionary not found. Tests that exercise MeCab will fail. "
         "Install mecab-ipadic (brew install mecab-ipadic on macOS, "
         "apt install mecab-ipadic-utf8 on Debian/Ubuntu) or pass "
         "-DKOTODAMA_IPADIC_DIR=/path/to/ipadic.")
@@ -438,6 +461,8 @@ if(BUILD_TESTS)
     include/kotodama/ebookviewmodel.h
     src/termmanager.cpp
     include/kotodama/termmanager.h
+    src/languagemodulemanager.cpp
+    include/kotodama/languagemodulemanager.h
   )
 
   target_link_libraries(
@@ -446,6 +471,8 @@ if(BUILD_TESTS)
     GTest::gtest
     GTest::gmock
     Qt${QT_VERSION_MAJOR}::Gui
+    Qt${QT_VERSION_MAJOR}::Network
+    kotodama_miniz
   )
 
   gtest_discover_tests(mainwindowmodel_test PROPERTIES ENVIRONMENT "${KOTODAMA_TEST_ENV}")

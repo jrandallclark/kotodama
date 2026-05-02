@@ -411,6 +411,11 @@ bool LanguageManager::isBuiltIn(const QString& code)
     return builtInLanguages.contains(code);
 }
 
+bool LanguageManager::languageRequiresModule(const QString& code)
+{
+    return code == "ja";
+}
+
 bool LanguageManager::validateLanguageCode(const QString& code, const QString& excludeCode)
 {
     // Format: 2-3 lowercase letters
