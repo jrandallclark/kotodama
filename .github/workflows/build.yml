@@ -71,8 +71,10 @@ jobs:
 
       - name: Bundle MeCab runtime
         run: |
-          # IPA dictionary is staged into Resources/dic by CMake POST_BUILD.
-          # This step only handles the dylib + relink.
+          # The IPA dictionary is not bundled — it's downloaded on
+          # demand at runtime by LanguageModuleManager. This step only
+          # bundles the libmecab dylib and relinks the executable to find
+          # it inside the app bundle.
           APP="build/kotodama.app"
           MACOS_DIR="$APP/Contents/MacOS"
           FRAMEWORKS_DIR="$APP/Contents/Frameworks"
@@ -96,7 +98,7 @@ jobs:
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
           VERSION=${VERSION#v}
           [[ -z "$VERSION" ]] && VERSION=0.0.0
-          DMG="build/kotodama-${VERSION}-macos-${MACOS_ARCH}.dmg"
+          DMG="build/kotodama-macos-${MACOS_ARCH}.dmg"
           hdiutil create -volname "Kotodama" \
             -srcfolder build/kotodama.app \
             -ov -format UDZO "$DMG"
@@ -188,8 +190,8 @@ jobs:
       - name: Bundle MeCab runtime DLL
         shell: pwsh
         run: |
-          # IPA dictionary is staged into build\Release\dic by CMake POST_BUILD.
-          # This step only copies the runtime DLL.
+          # The IPA dictionary is not — it's downloaded on
+          # demand at runtime. Only the runtime DLL ships in the installer.
           Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin\mecab.dll" build\Release
 
       - name: Deploy Qt dependencies (windeployqt)
@@ -229,7 +231,7 @@ jobs:
       - name: Package portable ZIP
         shell: pwsh
         run: |
-          $ZIP = "build\kotodama-${env:KOTODAMA_VERSION}-windows-x86_64-portable.zip"
+          $ZIP = "build\kotodama-windows-x86_64-portable.zip"
           Compress-Archive -Path "build\package\*" -DestinationPath $ZIP
 
       - name: Install NSIS
@@ -248,7 +250,7 @@ jobs:
           !define INSTALL_DIR "`$PROGRAMFILES64\Kotodama"
 
           Name "`${PRODUCT_NAME} `${PRODUCT_VERSION}"
-          OutFile "kotodama-$version-windows-x86_64-installer.exe"
+          OutFile "kotodama-windows-x86_64-installer.exe"
           InstallDir "`${INSTALL_DIR}"
           RequestExecutionLevel admin
 
@@ -333,7 +335,7 @@ jobs:
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
           VERSION=${VERSION#v}
           [[ -z "$VERSION" ]] && VERSION=0.0.0
-          mv kotodama.flatpak "kotodama-${VERSION}-linux-x86_64.flatpak"
+          mv kotodama.flatpak "kotodama-linux-x86_64.flatpak"
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -342,10 +344,47 @@ jobs:
           path: kotodama-*.flatpak
 
   # ---------------------------------------------------------------------------
+  # Language Module: Japanese (IPA dictionary)
+  # Packages the IPA dict from the pinned `ipadic` PyPI wheel into a stable
+  # release asset that LanguageModuleManager downloads at runtime.
+  # ---------------------------------------------------------------------------
+  build-module-ja:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch IPA dictionary from PyPI
+        run: |
+          pip install --no-deps --disable-pip-version-check ipadic==1.0.0
+          DIC_SRC=$(python -c "import ipadic, sys; sys.stdout.write(ipadic.DICDIR)")
+          if [ ! -f "$DIC_SRC/sys.dic" ]; then
+            echo "sys.dic not found in ipadic package at $DIC_SRC" >&2
+            exit 1
+          fi
+          mkdir -p module-staging/dic
+          cp -R "$DIC_SRC/." module-staging/dic/
+
+      - name: Package module zip
+        run: |
+          cd module-staging
+          zip -r ../kotodama-module-ja.zip dic
+          cd ..
+          ls -lah kotodama-module-ja.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kotodama-module-ja
+          path: kotodama-module-ja.zip
+
+  # ---------------------------------------------------------------------------
   # Release (attach artifacts to GitHub Release)
   # ---------------------------------------------------------------------------
   release:
-    needs: [build-macos, build-windows, build-linux]
+    needs: [build-macos, build-windows, build-linux, build-module-ja]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:

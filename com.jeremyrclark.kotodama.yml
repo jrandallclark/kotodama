@@ -17,22 +17,12 @@ modules:
         url: https://ftp.debian.org/debian/pool/main/m/mecab/mecab_0.996.orig.tar.gz
         sha256: e073325783135b72e666145c781bb48fada583d5224fb2490fb6c1403ba69c59
 
-  - name: mecab-ipadic
-    buildsystem: autotools
-    config-opts:
-      - --with-dicdir=/app/lib/mecab/dic/ipadic
-    sources:
-      - type: archive
-        url: https://ftp.debian.org/debian/pool/main/m/mecab-ipadic/mecab-ipadic_2.7.0-20070801+main.orig.tar.gz
-        sha256: b62f527d881c504576baed9c6ef6561554658b175ce6ae0096a60307e49e3523
-
   - name: kotodama
     buildsystem: cmake-ninja
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
       - -DDEV_BUILD=OFF
       - -DBUILD_TESTS=OFF
-      - -DKOTODAMA_IPADIC_DIR=/app/lib/mecab/dic/ipadic
     post-install:
       - install -Dm644 com.jeremyrclark.kotodama.desktop /app/share/applications/com.jeremyrclark.kotodama.desktop
       - install -Dm644 resources/icons/icon_256x256.png /app/share/icons/hicolor/256x256/apps/com.jeremyrclark.kotodama.png
@@ -40,3 +30,10 @@ modules:
     sources:
       - type: dir
         path: .
+      # miniz, dropped into the source tree so CMake's vendored-or-fetched
+      # logic picks it up without needing network at configure time. Pinned
+      # by tag rather than SHA so we don't have to refresh hashes.
+      - type: git
+        url: https://github.com/richgel999/miniz.git
+        tag: 3.0.2
+        dest: third_party/miniz

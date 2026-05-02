@@ -175,6 +175,17 @@ namespace Unicode {
 // ============================================================================
 // TEST DATA
 // ============================================================================
+// Base URL for downloadable language support modules. Points at the
+// kotodama-module-<code>.zip release assets attached to each tagged
+// release. Override at compile time with -DKOTODAMA_MODULE_BASE_URL=...
+// if the repo ever moves to a different owner/org.
+#ifndef KOTODAMA_MODULE_BASE_URL
+#define KOTODAMA_MODULE_BASE_URL "https://github.com/jrandallclark/kotodama/releases/latest/download"
+#endif
+namespace Module {
+    constexpr const char* BASE_URL = KOTODAMA_MODULE_BASE_URL;
+}
+
 namespace Test {
     constexpr int UUID_LENGTH_WITH_HYPHENS = 36;
     constexpr int UUID_LENGTH_WITHOUT_HYPHENS = 32;

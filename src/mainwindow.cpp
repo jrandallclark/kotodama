@@ -4,6 +4,7 @@
 #include "kotodama/languageselectiondialog.h"
 #include "kotodama/settingsdialog.h"
 #include "kotodama/languagemanager.h"
+#include "kotodama/languagemodulemanager.h"
 #include "kotodama/termmanager.h"
 #include "kotodama/thememanager.h"
 #include "kotodama/databasemanager.h"
@@ -153,9 +154,6 @@ void MainWindow::loadTexts()
 
     QString languageCode = getCurrentLanguage();
 
-    // Get texts from model
-    QList<TextDisplayItem> texts = model.getTexts(languageCode);
-
     // Clear all widgets from the layout (including empty state label and stretch)
     QLayoutItem* item;
     while ((item = cardLayout->takeAt(0)) != nullptr) {
@@ -164,6 +162,70 @@ void MainWindow::loadTexts()
         }
         delete item;
     }
+
+    // If the current language requires a support module that isn't
+    // installed, replace the card view with an install-prompt banner.
+    // The dropdown remains usable so the user can switch languages.
+    auto& langMgr = LanguageManager::instance();
+    bool moduleMissing =
+        !languageCode.isEmpty()
+        && LanguageManager::languageRequiresModule(languageCode)
+        && !LanguageModuleManager::instance().isInstalled(languageCode);
+
+    if (moduleMissing) {
+        QString langName = langMgr.getLanguageByCode(languageCode).name();
+        if (langName.isEmpty()) langName = languageCode;
+
+        QWidget* banner = new QWidget();
+        QVBoxLayout* bannerLayout = new QVBoxLayout(banner);
+        bannerLayout->setAlignment(Qt::AlignCenter);
+        bannerLayout->setSpacing(Constants::Spacing::MEDIUM);
+
+        QLabel* title = new QLabel(QString("%1 support is not installed").arg(langName));
+        title->setAlignment(Qt::AlignCenter);
+        title->setStyleSheet(QString("color: %1; font-size: 16pt; font-weight: 600;")
+                                 .arg(ThemeManager::instance().getColorHex(ThemeColor::TextPrimary)));
+
+        QLabel* desc = new QLabel(
+            QString("Install the %1 support module to import or read texts in this language.")
+                .arg(langName));
+        desc->setAlignment(Qt::AlignCenter);
+        desc->setWordWrap(true);
+        desc->setStyleSheet(QString("color: %1; font-size: 12pt;")
+                                 .arg(ThemeManager::instance().getColorHex(ThemeColor::TextSecondary)));
+
+        QPushButton* installBtn = new QPushButton("Install support module");
+        installBtn->setCursor(Qt::PointingHandCursor);
+        installBtn->setMinimumHeight(Constants::Control::IMPORT_BUTTON_MIN_HEIGHT);
+        connect(installBtn, &QPushButton::clicked, this, [this, languageCode]() {
+            LanguageManagerDialog dialog(this);
+            dialog.exec();
+            // Refresh: if the user installed the module, the banner
+            // gives way to the normal card view.
+            loadTexts();
+        });
+
+        bannerLayout->addStretch();
+        bannerLayout->addWidget(title);
+        bannerLayout->addWidget(desc);
+        QHBoxLayout* btnRow = new QHBoxLayout();
+        btnRow->addStretch();
+        btnRow->addWidget(installBtn);
+        btnRow->addStretch();
+        bannerLayout->addLayout(btnRow);
+        bannerLayout->addStretch();
+
+        cardLayout->addWidget(banner);
+        cardLayout->addStretch();
+
+        if (importButton) importButton->setEnabled(false);
+        return;
+    }
+
+    if (importButton) importButton->setEnabled(true);
+
+    // Get texts from model
+    QList<TextDisplayItem> texts = model.getTexts(languageCode);
 
     if (texts.isEmpty()) {
         // Show empty state message

@@ -1,15 +1,17 @@
 #include "kotodama/languagemanagerdialog.h"
 #include "kotodama/constants.h"
 #include "kotodama/languageeditdialog.h"
-#include "kotodama/constants.h"
 #include "kotodama/languagemanager.h"
-#include "kotodama/constants.h"
+#include "kotodama/languagemodulemanager.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QDialogButtonBox>
+#include <QProgressDialog>
+
+#include <memory>
 
 LanguageManagerDialog::LanguageManagerDialog(QWidget *parent)
     : QDialog(parent)
@@ -31,8 +33,8 @@ void LanguageManagerDialog::setupUI()
 
     // Table widget
     languageTable = new QTableWidget();
-    languageTable->setColumnCount(6);
-    languageTable->setHorizontalHeaderLabels({"Name", "Code", "Regex Pattern", "Char-based", "Token limit", "Type"});
+    languageTable->setColumnCount(7);
+    languageTable->setHorizontalHeaderLabels({"Name", "Code", "Regex Pattern", "Char-based", "Token limit", "Type", "Module"});
     languageTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     languageTable->setSelectionMode(QAbstractItemView::SingleSelection);
     languageTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -43,6 +45,7 @@ void LanguageManagerDialog::setupUI()
     languageTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     languageTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
     languageTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
+    languageTable->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
     languageTable->setColumnWidth(0, Constants::TableColumn::LANGUAGE_NAME_WIDTH);
 
     connect(languageTable, &QTableWidget::itemSelectionChanged,
@@ -58,17 +61,21 @@ void LanguageManagerDialog::setupUI()
     addButton = new QPushButton("Add");
     editButton = new QPushButton("Edit");
     deleteButton = new QPushButton("Delete");
+    moduleButton = new QPushButton("Install support module");
 
     editButton->setEnabled(false);
     deleteButton->setEnabled(false);
+    moduleButton->setVisible(false);
 
     connect(addButton, &QPushButton::clicked, this, &LanguageManagerDialog::onAddClicked);
     connect(editButton, &QPushButton::clicked, this, &LanguageManagerDialog::onEditClicked);
     connect(deleteButton, &QPushButton::clicked, this, &LanguageManagerDialog::onDeleteClicked);
+    connect(moduleButton, &QPushButton::clicked, this, &LanguageManagerDialog::onModuleClicked);
 
     buttonLayout->addWidget(addButton);
     buttonLayout->addWidget(editButton);
     buttonLayout->addWidget(deleteButton);
+    buttonLayout->addWidget(moduleButton);
     buttonLayout->addStretch();
 
     mainLayout->addLayout(buttonLayout);
@@ -117,6 +124,18 @@ void LanguageManagerDialog::populateTable()
         typeItem->setTextAlignment(Qt::AlignCenter);
         languageTable->setItem(row, 5, typeItem);
 
+        // Module status
+        QString moduleText;
+        if (LanguageManager::languageRequiresModule(lang.code())) {
+            moduleText = LanguageModuleManager::instance().isInstalled(lang.code())
+                         ? "Installed" : "Not installed";
+        } else {
+            moduleText = "—";
+        }
+        QTableWidgetItem* moduleItem = new QTableWidgetItem(moduleText);
+        moduleItem->setTextAlignment(Qt::AlignCenter);
+        languageTable->setItem(row, 6, moduleItem);
+
         // Style built-in rows
         if (isBuiltIn) {
             for (int col = 0; col < languageTable->columnCount(); ++col) {
@@ -151,6 +170,7 @@ void LanguageManagerDialog::onTableSelectionChanged()
     if (selectedItems.isEmpty()) {
         editButton->setEnabled(false);
         deleteButton->setEnabled(false);
+        moduleButton->setVisible(false);
         return;
     }
 
@@ -162,6 +182,125 @@ void LanguageManagerDialog::onTableSelectionChanged()
 
     // Delete button enabled only for custom languages
     deleteButton->setEnabled(!isBuiltIn);
+
+    updateModuleButton();
+}
+
+QString LanguageManagerDialog::selectedLanguageCode() const
+{
+    int row = languageTable->currentRow();
+    if (row < 0) return QString();
+    QTableWidgetItem* codeItem = languageTable->item(row, 1);
+    return codeItem ? codeItem->text() : QString();
+}
+
+void LanguageManagerDialog::updateModuleButton()
+{
+    QString code = selectedLanguageCode();
+    if (code.isEmpty() || !LanguageManager::languageRequiresModule(code)) {
+        moduleButton->setVisible(false);
+        return;
+    }
+    moduleButton->setVisible(true);
+    if (LanguageModuleManager::instance().isInstalled(code)) {
+        moduleButton->setText("Remove support module");
+    } else {
+        moduleButton->setText("Install support module");
+    }
+}
+
+void LanguageManagerDialog::onModuleClicked()
+{
+    QString code = selectedLanguageCode();
+    if (code.isEmpty() || !LanguageManager::languageRequiresModule(code)) {
+        return;
+    }
+
+    auto& mgr = LanguageModuleManager::instance();
+
+    if (mgr.isInstalled(code)) {
+        QMessageBox::StandardButton reply = QMessageBox::question(
+            this, "Remove support module",
+            QString("Remove the support module for %1? You will need to "
+                    "reinstall it to use this language again.")
+                .arg(languageTable->item(languageTable->currentRow(), 0)->text()),
+            QMessageBox::Yes | QMessageBox::No);
+        if (reply == QMessageBox::Yes) {
+            mgr.uninstall(code);
+            populateTable();
+            updateModuleButton();
+        }
+        return;
+    }
+
+    // Install flow with progress dialog.
+    // Kick off install BEFORE wiring signal connections. If install() bails
+    // (busy), we just discard the dialog — the still-running install for
+    // some other code path is unaffected.
+    if (!mgr.install(code)) {
+        QMessageBox::warning(this, "Install failed",
+            "Another module install is already in progress.");
+        return;
+    }
+
+    QProgressDialog* progress = new QProgressDialog(
+        QString("Downloading %1 support module…")
+            .arg(languageTable->item(languageTable->currentRow(), 0)->text()),
+        "Cancel", 0, 100, this);
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setValue(0);
+
+    // Track connections so we can disconnect all three when the install
+    // finishes. Heap-alloc so lambdas can capture by value and still
+    // observe the populated struct.
+    struct ModuleConns {
+        QMetaObject::Connection progressConn;
+        QMetaObject::Connection extractingConn;
+        QMetaObject::Connection finishedConn;
+    };
+    auto conns = std::make_shared<ModuleConns>();
+
+    conns->progressConn = connect(&mgr, &LanguageModuleManager::progress, this,
+        [progress, code](const QString& lang, qint64 received, qint64 total) {
+            if (lang != code) return;
+            if (total > 0) {
+                progress->setMaximum(100);
+                progress->setValue(static_cast<int>((received * 100) / total));
+            } else {
+                progress->setMaximum(0);  // indeterminate
+            }
+        });
+
+    conns->extractingConn = connect(&mgr, &LanguageModuleManager::extracting, this,
+        [progress, code](const QString& lang) {
+            if (lang != code) return;
+            progress->setLabelText("Extracting support module…");
+            progress->setMaximum(0);  // indeterminate
+        });
+
+    conns->finishedConn = connect(&mgr, &LanguageModuleManager::finished, this,
+        [this, progress, code, conns](const QString& lang, bool success, const QString& err) {
+            if (lang != code) return;
+            disconnect(conns->progressConn);
+            disconnect(conns->extractingConn);
+            disconnect(conns->finishedConn);
+            progress->close();
+            progress->deleteLater();
+            if (success) {
+                QMessageBox::information(this, "Module installed",
+                    "Support module installed successfully.");
+            } else {
+                QMessageBox::warning(this, "Install failed",
+                    QString("Could not install support module:\n\n%1").arg(err));
+            }
+            populateTable();
+            updateModuleButton();
+        });
+
+    connect(progress, &QProgressDialog::canceled, &mgr, &LanguageModuleManager::cancel);
 }
 
 void LanguageManagerDialog::onTableDoubleClicked(int row, int column)

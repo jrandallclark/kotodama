@@ -25,6 +25,10 @@ public:
     bool deleteCustomLanguage(const QString& code);
     bool isBuiltIn(const QString& code);
 
+    // True for languages that need an on-demand support module (e.g. "ja"
+    // requires the MeCab IPA dictionary). Used by UI to gate import/open.
+    static bool languageRequiresModule(const QString& code);
+
     // Validation
     bool validateLanguageCode(const QString& code, const QString& excludeCode = "");
     bool validateRegexPattern(const QString& regex);

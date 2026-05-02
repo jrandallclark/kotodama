@@ -2,6 +2,8 @@
 #include "kotodama/databasemanager.h"
 #include "kotodama/librarymanager.h"
 #include "kotodama/ebookviewmodel.h"
+#include "kotodama/languagemanager.h"
+#include "kotodama/languagemodulemanager.h"
 
 #include <QFile>
 #include <QTextStream>
@@ -56,6 +58,16 @@ TextProgressStats ProgressCalculator::calculateTextProgress(const QString& uuid)
     // Get language from database
     TextInfo textInfo = DatabaseManager::instance().getText(uuid);
     QString language = textInfo.language;
+
+    // Skip analysis for languages whose support module isn't installed yet.
+    // The text card still appears in the library; the user just sees blank
+    // progress until they install the module from Language Manager.
+    // Don't cache the empty result — installing the module won't trigger
+    // a rebuild, and we want the progress to populate on next access.
+    if (LanguageManager::languageRequiresModule(language) &&
+        !LanguageModuleManager::instance().isInstalled(language)) {
+        return stats;
+    }
 
     // Analyze text using EbookViewModel
     EbookViewModel viewModel;
