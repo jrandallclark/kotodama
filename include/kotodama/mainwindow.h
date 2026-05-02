@@ -37,6 +37,7 @@ protected:
 
 private slots:
     void onCardClicked(QString uuid);
+    void onTermChangedInViewer(const QString& language);
     void onDeleteRequested(QString uuid);
     void onImportClicked();
     void onLanguageChanged(int index);

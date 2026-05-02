@@ -74,7 +74,7 @@ void LanguageSelectionWidget::populateLanguages()
         checkboxFont.setPointSize(Constants::Font::SIZE_MEDIUM);
         checkbox->setFont(checkboxFont);
 
-        connect(checkbox, &QCheckBox::stateChanged, this, &LanguageSelectionWidget::onCheckboxChanged);
+        connect(checkbox, &QCheckBox::checkStateChanged, this, &LanguageSelectionWidget::onCheckboxChanged);
 
         languageCheckboxes[lang.code()] = checkbox;
         scrollLayout->addWidget(checkbox);

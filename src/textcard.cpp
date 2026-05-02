@@ -184,7 +184,7 @@ void TextCard::setTextInfo(const TextDisplayItem& item, const TextProgressStats&
 
     // Set progress bar
     int percentKnown = static_cast<int>(stats.percentKnown);
-    progressBar->setValue(100 - percentKnown);
+    progressBar->setValue(percentKnown);
 
     // Color code progress bar based on percentage
     QString progressBarStyle;

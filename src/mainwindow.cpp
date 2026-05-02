@@ -347,6 +347,7 @@ void MainWindow::onCardClicked(QString uuid)
     // Create or reuse viewer
     if (!viewer) {
         viewer = new EbookViewer(this);
+        connect(viewer, &EbookViewer::termChanged, this, &MainWindow::onTermChangedInViewer);
     }
 
     viewer->loadFile(filePath, uuid, textInfo.language, textInfo.title);
@@ -359,6 +360,12 @@ void MainWindow::onCardClicked(QString uuid)
     // Refresh the card list to re-sort by most recently opened
     // Use QTimer to defer until after the click event completes
     QTimer::singleShot(0, this, &MainWindow::loadTexts);
+}
+
+void MainWindow::onTermChangedInViewer(const QString& language)
+{
+    Q_UNUSED(language);
+    loadTexts();
 }
 
 void MainWindow::onDeleteRequested(QString uuid)

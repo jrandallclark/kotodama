@@ -3,6 +3,7 @@
 #include "kotodama/thememanager.h"
 #include "kotodama/languagemanager.h"
 #include "kotodama/databasemanager.h"
+#include "kotodama/progresscalculator.h"
 #include "kotodama/constants.h"
 
 #include <QFile>
@@ -593,6 +594,12 @@ void EbookViewer::onTermSaved(QString pronunciation, QString definition, TermLev
     model.refreshTermMatches();
     applyHighlights();
 
+    // Invalidate progress cache so text list reflects updated term stats
+    ProgressCalculator::instance().invalidateProgressCache(model.getLanguage());
+
+    // Notify listeners so the text list refreshes in real time
+    emit termChanged(model.getLanguage());
+
     // Unpin the panel
     infoPanelPinned = false;
     pinnedTermText.clear();
@@ -633,6 +640,12 @@ void EbookViewer::onTermDeleted()
         // Refresh term matches and highlights
         model.refreshTermMatches();
         applyHighlights();
+
+        // Invalidate progress cache so text list reflects updated term stats
+        ProgressCalculator::instance().invalidateProgressCache(model.getLanguage());
+
+        // Notify listeners so the text list refreshes in real time
+        emit termChanged(model.getLanguage());
     }
 
     // Unpin the panel
@@ -645,17 +658,22 @@ void EbookViewer::onTermDeleted()
 
 void EbookViewer::keyPressEvent(QKeyEvent* event)
 {
-    // Handle Escape first - close panel but keep focus
-    if (event->key() == Qt::Key_Escape && infoPanelPinned) {
-        infoPanelPinned = false;
-        pinnedTermText.clear();
-        pinnedLanguage.clear();
-        infoPanel->reset();
+    // Escape: unpin panel if pinned, otherwise close viewer
+    if (event->key() == Qt::Key_Escape) {
+        if (infoPanelPinned) {
+            infoPanelPinned = false;
+            pinnedTermText.clear();
+            pinnedLanguage.clear();
+            infoPanel->reset();
+            event->accept();
+            return;
+        }
+        close();
         event->accept();
         return;
     }
 
-    // If panel is pinned, only handle Escape (above) and pass other keys through
+    // If panel is pinned, pass other keys through
     if (infoPanelPinned) {
         QMainWindow::keyPressEvent(event);
         return;

@@ -366,6 +366,38 @@ TEST_F(EbookViewModelTest, HandlesTextWithNumbers) {
     EXPECT_EQ(tokens[1].text, "hello");
 }
 
+TEST_F(EbookViewModelTest, HandlesJapaneseTextWithNumbers) {
+    EbookViewModel model;
+    model.loadContent("42個のりんごと100円", "ja");
+
+    const auto& tokens = model.getTokenBoundaries();
+
+    // Numbers should not appear as tokens in any language
+    for (const auto& token : tokens) {
+        QString text = token.text;
+        bool isNumeric = true;
+        for (const QChar& ch : text) {
+            if (!ch.isDigit()) {
+                isNumeric = false;
+                break;
+            }
+        }
+        EXPECT_FALSE(isNumeric) << "Numeric token should not appear: " << text.toStdString();
+    }
+
+    // Letter-based tokens should still be present
+    bool hasLetterToken = false;
+    for (const auto& token : tokens) {
+        for (const QChar& ch : token.text) {
+            if (ch.isLetter()) {
+                hasLetterToken = true;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(hasLetterToken) << "Expected at least one letter-based token";
+}
+
 TEST_F(EbookViewModelTest, HandlesUnicodeContent) {
     EbookViewModel model;
     model.loadContent("café résumé naïve", "fr");

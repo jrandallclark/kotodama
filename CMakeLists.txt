@@ -80,7 +80,8 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets LinguistTools Sql
 find_path(MECAB_INCLUDE_DIR mecab.h
     PATHS /opt/homebrew/include /usr/local/include /usr/include)
 find_library(MECAB_LIBRARY mecab
-    PATHS /opt/homebrew/lib /usr/local/lib /usr/lib)
+    PATHS /opt/homebrew/lib /usr/local/lib /usr/lib
+    NO_DEFAULT_PATH)
 if(MECAB_INCLUDE_DIR AND MECAB_LIBRARY)
     set(MECAB_FOUND TRUE CACHE INTERNAL "" FORCE)
     set(MECAB_INCLUDE_DIRS ${MECAB_INCLUDE_DIR})

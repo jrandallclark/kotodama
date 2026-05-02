@@ -29,6 +29,9 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
 
+signals:
+    void termChanged(const QString& language);
+
 private:
     QTextBrowser* textDisplay;
     QString currentFile;

@@ -7,6 +7,7 @@
 #include "kotodama/termmanager.h"
 
 #include <QDebug>
+#include <QRegularExpression>
 #include <QSet>
 
 EbookViewModel::EbookViewModel()
@@ -48,10 +49,28 @@ void EbookViewModel::tokenizeText()
     const Tokenizer* tokenizer = config.tokenizer();
 
     for (const TokenResult& result : tokenizer->tokenize(text)) {
+        QString tokenText = QString::fromStdString(result.text);
+
+        bool hasLetter = false;
+        for (const QChar& ch : tokenText) {
+            if (ch.isLetter()) {
+                hasLetter = true;
+                break;
+            }
+        }
+        if (!hasLetter) continue;
+
+        // For character-based languages, also filter tokens that contain
+        // only non-target-script characters (e.g. Latin letters in Japanese text)
+        if (config.isCharBased()) {
+            QRegularExpression scriptRe(config.wordRegex());
+            if (!tokenText.contains(scriptRe)) continue;
+        }
+
         TokenInfo tokenInfo;
         tokenInfo.startPos = result.startPos;
         tokenInfo.endPos   = result.endPos;
-        tokenInfo.text     = QString::fromStdString(result.text);
+        tokenInfo.text     = tokenText;
         tokenBoundaries.push_back(tokenInfo);
     }
 }
