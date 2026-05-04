@@ -2,6 +2,7 @@ name: Build Kotodama
 
 on:
   push:
+    branches: ['main']
     tags: ['v*']
   workflow_dispatch:
     inputs:
@@ -51,7 +52,7 @@ jobs:
           ls -l "$MECAB_PREFIX/include/" || true
           cmake -B build -S . \
             -DCMAKE_BUILD_TYPE=Release \
-            -DDEV_BUILD=${{ github.event.inputs.dev_build == 'true' && 'ON' || 'OFF' }} \
+            -DDEV_BUILD=${{ (startsWith(github.ref, 'refs/tags/v') && github.event.inputs.dev_build != 'true') && 'OFF' || 'ON' }} \
             -DCMAKE_OSX_ARCHITECTURES=$MACOS_ARCH \
             -DMECAB_INCLUDE_DIR="$MECAB_PREFIX/include" \
             -DMECAB_LIBRARY="$MECAB_PREFIX/lib/libmecab.dylib"
@@ -65,11 +66,13 @@ jobs:
           ctest --output-on-failure -C Release
 
       - name: Deploy Qt dependencies (macdeployqt)
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           cd build
           macdeployqt kotodama.app
 
       - name: Bundle MeCab runtime
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           # The IPA dictionary is not bundled — it's downloaded on
           # demand at runtime by LanguageModuleManager. This step only
@@ -89,11 +92,13 @@ jobs:
             "$MACOS_DIR/kotodama"
 
       - name: Ad-hoc codesign
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           codesign --force --deep --sign - build/kotodama.app
           codesign --verify --verbose build/kotodama.app
 
       - name: Create DMG
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
           VERSION=${VERSION#v}
@@ -104,6 +109,7 @@ jobs:
             -ov -format UDZO "$DMG"
 
       - name: Upload artifact
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: kotodama-macos-arm64
@@ -172,7 +178,7 @@ jobs:
         run: |
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=Release `
-            -DDEV_BUILD=${{ github.event.inputs.dev_build == 'true' && 'ON' || 'OFF' }} `
+            -DDEV_BUILD=${{ (startsWith(github.ref, 'refs/tags/v') && github.event.inputs.dev_build != 'true') && 'OFF' || 'ON' }} `
             -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" `
             -DKOTODAMA_IPADIC_DIR="$env:KOTODAMA_IPADIC_DIR"
 
@@ -188,6 +194,7 @@ jobs:
           ctest --output-on-failure -C Release
 
       - name: Bundle MeCab runtime DLL
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           # The IPA dictionary is not — it's downloaded on
@@ -195,11 +202,13 @@ jobs:
           Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin\mecab.dll" build\Release
 
       - name: Deploy Qt dependencies (windeployqt)
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: cmd
         run: |
           windeployqt build\Release\kotodama.exe --release --no-translations
 
       - name: Stage release files
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           # Stage release files into a clean dir, excluding debug symbols and
@@ -219,6 +228,7 @@ jobs:
             }
 
       - name: Resolve version
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           $VERSION = "${{ github.event.inputs.version }}" -replace '^v',''
@@ -229,16 +239,19 @@ jobs:
           "KOTODAMA_VERSION=$VERSION" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Package portable ZIP
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           $ZIP = "build\kotodama-windows-x86_64-portable.zip"
           Compress-Archive -Path "build\package\*" -DestinationPath $ZIP
 
       - name: Install NSIS
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: choco install nsis -y --no-progress
 
       - name: Build NSIS installer
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           $nsi = "build\installer.nsi"
@@ -302,6 +315,7 @@ jobs:
           } finally { Pop-Location }
 
       - name: Upload artifact
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: kotodama-windows-x86_64
@@ -313,6 +327,7 @@ jobs:
   # Linux Build (Flatpak)
   # ---------------------------------------------------------------------------
   build-linux:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.7
@@ -349,6 +364,7 @@ jobs:
   # release asset that LanguageModuleManager downloads at runtime.
   # ---------------------------------------------------------------------------
   build-module-ja:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Set up Python
