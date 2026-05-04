@@ -6,10 +6,10 @@
 
 // Struct for text progress statistics
 struct TextProgressStats {
-    int totalUniqueWords;
-    int knownWords;
-    int newWords;
-    float percentKnown;
+    int totalUniqueWords = 0;
+    int knownWords = 0;
+    int newWords = 0;
+    int percentKnown = 0;
 };
 
 // Singleton class for calculating and caching text progress statistics

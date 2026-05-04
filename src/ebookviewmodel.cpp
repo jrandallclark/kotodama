@@ -296,7 +296,7 @@ TextProgressStats EbookViewModel::calculateProgressStats() const
     stats.knownWords = knownUniqueWords.size();
 
     stats.newWords = stats.totalUniqueWords - stats.knownWords;
-    stats.percentKnown = (static_cast<float>(stats.knownWords) / stats.totalUniqueWords) * 100.0f;
+    stats.percentKnown = (stats.knownWords * 100) / stats.totalUniqueWords;
 
     return stats;
 }
@@ -490,9 +490,17 @@ std::vector<QPair<int,int>> EbookViewModel::addTermPositions(const Term& term)
         coveredUntil = c.e;
     }
 
+    int savedPos = (m_focusedTokenIndex >= 0 && m_focusedTokenIndex < static_cast<int>(m_tokenBoundaries.size()))
+        ? m_tokenBoundaries[m_focusedTokenIndex].startPos
+        : -1;
+
     m_termPositions = std::move(next);
     indexTermPositions();
     buildDisplayTokens();
+
+    if (savedPos >= 0) {
+        restoreFocusFromPosition(savedPos);
+    }
 
     for (const auto& sp : spans) {
         changed.push_back(sp);
@@ -517,9 +525,18 @@ std::vector<QPair<int,int>> EbookViewModel::removeTermPositions(const QString& t
 
     if (changed.empty()) return changed;
 
+    int savedPos = (m_focusedTokenIndex >= 0 && m_focusedTokenIndex < static_cast<int>(m_tokenBoundaries.size()))
+        ? m_tokenBoundaries[m_focusedTokenIndex].startPos
+        : -1;
+
     m_termPositions = std::move(next);
     indexTermPositions();
     buildDisplayTokens();
+
+    if (savedPos >= 0) {
+        restoreFocusFromPosition(savedPos);
+    }
+
     return changed;
 }
 
@@ -738,6 +755,12 @@ int EbookViewModel::findLastTokenAtOrBefore(int pos) const
         [](int p, const TokenInfo& t) { return p < t.startPos; });
     if (it == m_tokenBoundaries.begin()) return -1;
     return static_cast<int>(--it - m_tokenBoundaries.begin());
+}
+
+void EbookViewModel::restoreFocusFromPosition(int pos)
+{
+    int idx = findLastTokenAtOrBefore(pos);
+    m_focusedTokenIndex = (idx < 0) ? 0 : idx;
 }
 
 void EbookViewModel::beginChunkedTermMatching()

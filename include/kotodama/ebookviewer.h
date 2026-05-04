@@ -63,8 +63,12 @@ private:
     // pending rehighlight batches from a previous edit can be cancelled.
     int m_rebuildGeneration = 0;
 
+    // Connection used by restoreReadingPosition to wait for document layout
+    QMetaObject::Connection m_restoreConnection;
+
     // Reading position tracking
     QTimer* positionSaveTimer;
+    bool m_loadingFile = false;  // blocks autosave during loadFile to prevent overwriting saved position
 
     // Focus for keyboard navigation
     void updateFocusHighlight();

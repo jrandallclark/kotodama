@@ -30,7 +30,7 @@ TextProgressStats ProgressCalculator::calculateTextProgress(const QString& uuid)
     stats.totalUniqueWords = 0;
     stats.knownWords = 0;
     stats.newWords = 0;
-    stats.percentKnown = 0.0f;
+    stats.percentKnown = 0;
 
     // Get file path
     QString filePath = LibraryManager::instance().getTextFilePath(uuid);

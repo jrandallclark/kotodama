@@ -7,8 +7,7 @@
 #include "kotodama/progresscalculator.h"
 #include "kotodama/constants.h"
 
-#include <QApplication>
-
+#include <algorithm>
 #include <QFile>
 #include <QTextStream>
 #include <QMessageBox>
@@ -22,6 +21,7 @@
 #include <QRegularExpression>
 #include <QCloseEvent>
 #include <QScrollBar>
+#include <QTimer>
 
 EbookViewer::EbookViewer(QWidget *parent)
     : QMainWindow(parent), m_infoPanelPinned(false)
@@ -73,13 +73,13 @@ EbookViewer::EbookViewer(QWidget *parent)
     layout->addWidget(infoPanel);
     setCentralWidget(centralWidget);
 
-    // Setup reading position tracking
+    // Periodic position save — debounced so the DB write only happens 2s after
+    // the user stops scrolling. Guards against losing position on crash/kill.
     positionSaveTimer = new QTimer(this);
     positionSaveTimer->setSingleShot(true);
     positionSaveTimer->setInterval(Constants::Timing::POSITION_SAVE_DELAY_MS);
     connect(positionSaveTimer, &QTimer::timeout, this, &EbookViewer::saveReadingPosition);
 
-    // Connect scroll events
     connect(textDisplay->verticalScrollBar(), &QScrollBar::valueChanged,
             this, &EbookViewer::onScrollChanged);
 
@@ -151,6 +151,10 @@ void EbookViewer::loadFile(const QString& filepath, const QString& uuid, const Q
     QFont font = textDisplay->font();
     font.setPointSize(fontSize);
     textDisplay->setFont(font);
+
+    // Block autosave during load — setPlainText fires valueChanged(0) which
+    // would otherwise overwrite the real saved position before restore kicks in.
+    m_loadingFile = true;
 
     // Display plain text. QSyntaxHighlighter auto-triggers on setPlainText
     // via contentsChange — no need for explicit rehighlight() call.
@@ -475,6 +479,9 @@ void EbookViewer::onTermSaved(QString pronunciation, QString definition, TermLev
         return; // Keep panel open so user can try again
     }
 
+    // Save scroll position before panel reset, which changes layout height
+    int savedScroll = textDisplay->verticalScrollBar()->value();
+
     // Close editor immediately — user sees instant response
     m_infoPanelPinned = false;
     QString termText = m_pinnedTermText;
@@ -501,10 +508,17 @@ void EbookViewer::onTermSaved(QString pronunciation, QString definition, TermLev
 
     ProgressCalculator::instance().invalidateProgressCache(lang);
     emit termChanged(lang);
+
+    QTimer::singleShot(0, this, [this, savedScroll]() {
+        textDisplay->verticalScrollBar()->setValue(savedScroll);
+    });
 }
 
 void EbookViewer::onEditCancelled()
 {
+    // Save scroll position before panel reset, which changes layout height
+    int savedScroll = textDisplay->verticalScrollBar()->value();
+
     // Unpin the panel
     m_infoPanelPinned = false;
     m_pinnedTermText.clear();
@@ -512,6 +526,10 @@ void EbookViewer::onEditCancelled()
     m_pinnedStartPos = -1;
     m_pinnedEndPos   = -1;
     infoPanel->reset();
+
+    QTimer::singleShot(0, this, [this, savedScroll]() {
+        textDisplay->verticalScrollBar()->setValue(savedScroll);
+    });
 }
 
 void EbookViewer::onTermDeleted()
@@ -532,6 +550,9 @@ void EbookViewer::onTermDeleted()
             return; // Keep panel open so user can try again
         }
 
+        // Save scroll position before panel reset, which changes layout height
+        int savedScroll = textDisplay->verticalScrollBar()->value();
+
         // Close editor immediately
         m_infoPanelPinned = false;
         QString termText = m_pinnedTermText;
@@ -551,7 +572,14 @@ void EbookViewer::onTermDeleted()
 
         ProgressCalculator::instance().invalidateProgressCache(lang);
         emit termChanged(lang);
+
+        QTimer::singleShot(0, this, [this, savedScroll]() {
+            textDisplay->verticalScrollBar()->setValue(savedScroll);
+        });
     } else {
+        // Save scroll position before panel reset
+        int savedScroll = textDisplay->verticalScrollBar()->value();
+
         // Close panel even if term didn't exist
         m_infoPanelPinned = false;
         m_pinnedTermText.clear();
@@ -559,6 +587,10 @@ void EbookViewer::onTermDeleted()
         m_pinnedStartPos = -1;
         m_pinnedEndPos   = -1;
         infoPanel->reset();
+
+        QTimer::singleShot(0, this, [this, savedScroll]() {
+            textDisplay->verticalScrollBar()->setValue(savedScroll);
+        });
     }
 }
 
@@ -654,7 +686,7 @@ void EbookViewer::keyPressEvent(QKeyEvent* event)
 
 void EbookViewer::saveReadingPosition()
 {
-    if (m_currentUuid.isEmpty()) {
+    if (m_currentUuid.isEmpty() || m_loadingFile) {
         return;
     }
 
@@ -665,27 +697,67 @@ void EbookViewer::saveReadingPosition()
 void EbookViewer::restoreReadingPosition()
 {
     if (m_currentUuid.isEmpty()) {
+        m_loadingFile = false;
         return;
     }
 
     TextInfo textInfo = DatabaseManager::instance().getText(m_currentUuid);
-    if (textInfo.readingPosition > 0) {
-        // Use a single-shot timer to restore position after the text browser has finished layout
-        QTimer::singleShot(0, [this, textInfo]() {
-            textDisplay->verticalScrollBar()->setValue(textInfo.readingPosition);
-        });
+    if (textInfo.readingPosition <= 0) {
+        m_loadingFile = false;
+        return;
     }
+
+    int pos = textInfo.readingPosition;
+
+    // If the scrollbar range already covers our position, set it immediately
+    // and re-enable autosave. Covers the common case where layout finished
+    // before we got here.
+    int maxVal = textDisplay->verticalScrollBar()->maximum();
+    if (pos <= maxVal) {
+        textDisplay->verticalScrollBar()->setValue(pos);
+        m_loadingFile = false;
+        return;
+    }
+
+    // Layout is still in progress — wait for the scrollbar range to expand.
+    // rangeChanged fires when the document layout pushes the max up.
+    disconnect(m_restoreConnection);
+    m_restoreConnection = connect(textDisplay->verticalScrollBar(), &QScrollBar::rangeChanged,
+        this, [this, pos](int /*min*/, int max) {
+            if (max >= pos) {
+                textDisplay->verticalScrollBar()->setValue(pos);
+                disconnect(m_restoreConnection);
+                m_loadingFile = false;
+            }
+        });
+
+    // Fallback: if the range never reaches pos (window resized, font changed,
+    // etc.) force-restore with clamping after 500ms so we don't silently fail.
+    QTimer::singleShot(500, this, [this, pos]() {
+        if (m_loadingFile) {
+            int maxVal2 = textDisplay->verticalScrollBar()->maximum();
+            textDisplay->verticalScrollBar()->setValue(std::min(pos, maxVal2));
+            disconnect(m_restoreConnection);
+            m_loadingFile = false;
+        }
+    });
 }
 
 void EbookViewer::onScrollChanged()
 {
-    // Restart the timer - position will be saved 2 seconds after scrolling stops
+    // Don't autosave while loading — setPlainText fires valueChanged(0)
+    // which would overwrite the real saved position before restore completes.
+    if (m_loadingFile) {
+        return;
+    }
+
+    // Restart the debounce timer — position saved 2s after scrolling stops
     positionSaveTimer->start();
 }
 
 void EbookViewer::closeEvent(QCloseEvent* event)
 {
-    // Save position immediately when closing
+    // Save position immediately on close (in addition to periodic autosave)
     saveReadingPosition();
     QMainWindow::closeEvent(event);
 }

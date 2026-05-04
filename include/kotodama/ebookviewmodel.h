@@ -174,6 +174,7 @@ private:
     void tokenizeText();
     void indexTermPositions();
     const TermPosition* findTermPosition(const TokenInfo& token) const;
+    void restoreFocusFromPosition(int pos);
 };
 
 #endif // EBOOKVIEWMODEL_H

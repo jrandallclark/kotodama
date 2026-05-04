@@ -183,8 +183,9 @@ void TextCard::setTextInfo(const TextDisplayItem& item, const TextProgressStats&
     wordCountLabel->setText(QString::number(stats.totalUniqueWords) + " words");
 
     // Set progress bar
-    int percentKnown = static_cast<int>(stats.percentKnown);
+    int percentKnown = stats.percentKnown;
     progressBar->setValue(percentKnown);
+    progressBar->setFormat(QString("%1% new").arg(100 - percentKnown));
 
     // Color code progress bar based on percentage
     QString progressBarStyle;
