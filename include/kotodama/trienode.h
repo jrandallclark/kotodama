@@ -1,15 +1,19 @@
 #ifndef TRIENODE_H
 #define TRIENODE_H
 
-#include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "term.h"
+
+// Normalize a tokenizer-emitted token to its trie-key form (Unicode lowercase).
+// Fast-path: bytes already pure-ASCII-lowercase are returned untouched.
+std::string toLowerTrieKey(const std::string& token);
 
 class TrieNode
 {
 public:
-    std::map<std::string, TrieNode*> children;
+    std::unordered_map<std::string, TrieNode*> children;
     Term* term;
 
     TrieNode(Term* t = nullptr) : term(t) {}

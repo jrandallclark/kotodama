@@ -144,6 +144,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         ${ICON_RESOURCES}
         include/kotodama/ebookviewer.h src/ebookviewer.cpp
         include/kotodama/ebookviewmodel.h src/ebookviewmodel.cpp
+        include/kotodama/highlightersyntax.h src/highlightersyntax.cpp
         include/kotodama/mainwindowmodel.h src/mainwindowmodel.cpp
         include/kotodama/databasemanager.h src/databasemanager.cpp
         include/kotodama/librarymanager.h src/librarymanager.cpp

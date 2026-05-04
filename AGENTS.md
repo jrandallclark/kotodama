@@ -85,9 +85,14 @@ kotodama/
 **Core Utilities**
 - `tokenizer.cpp/h` - Regex-based text tokenization
 - `trienode.cpp/h` - Multi-way tree for phrase matching
+- `highlightersyntax.cpp/h` - Per-paragraph QSyntaxHighlighter for term-level coloring
 - `languageconfig.cpp/h` - Language-specific regex patterns
 - `progresscalculator.cpp/h` - Progress tracking and statistics
 - `singleinstanceguard.cpp/h` - Single instance application enforcement
+
+**Interfaces (Dependency Injection)**
+- `ilanguageprovider.h` - Abstract interface for language config lookups (decouples from LanguageManager singleton)
+- `itermstore.h` - Abstract interface for term/trie operations (decouples from TermManager singleton)
 
 **Data Structures**
 - `term.h` - Term struct with TermLevel enum (New, Learning, Known, WellKnown, Ignored)
@@ -194,7 +199,22 @@ private:
 
 Usage: `DatabaseManager::instance().someMethod()`
 
-### 3. Memory Management
+### 3. Dependency Injection (DI)
+Model classes accept abstract interfaces (`ILanguageProvider`, `ITermStore`) via constructor injection to decouple from singletons and enable testing with mock implementations. Default adapters delegate to singletons when no mock is provided:
+
+```cpp
+EbookViewModel::EbookViewModel(ILanguageProvider* langProvider = nullptr,
+                               ITermStore* termStore = nullptr)
+{
+    if (!langProvider) m_langProvider = &defaultLangProvider;  // wraps singleton
+    if (!termStore)   m_termStore   = &defaultTermStore;      // wraps singleton
+}
+
+// Tests inject mocks:
+EbookViewModel model(&mockLangProvider, &mockTermStore);
+```
+
+### 4. Memory Management
 - Explicit cleanup in destructors
 - Use of Qt parent-child ownership where appropriate
 - Manual delete for non-Qt objects stored in containers
@@ -215,7 +235,7 @@ Usage: `DatabaseManager::instance().someMethod()`
 - **Headers:** Located in `include/kotodama/` directory
 - **Classes:** `PascalCase` (e.g., `TermManager`)
 - **Functions:** `camelCase` (e.g., `addTerm()`)
-- **Member variables:** `camelCase` (e.g., `languageComboBox`)
+- **Member variables:** `m_` prefix + `camelCase` (e.g., `m_languageComboBox`)
 - **Enums:** `PascalCase` (e.g., `TermLevel::New`)
 
 ### Include Organization
@@ -325,8 +345,11 @@ if (!query.exec()) {
 Based on git history:
 - Settings menu implementation
 - MVC refactoring (MainWindow, EbookViewer)
+- DI interfaces (ILanguageProvider, ITermStore) for model testability
+- QSyntaxHighlighter-based per-paragraph highlighting (TermHighlighter)
+- Incremental term matching with chunked loading for responsive UI
 - Test suite expansion
-- Memory safety improvements (dangling pointers)
+- Memory safety improvements (dangling pointers, const-correctness)
 
 ## Important Notes
 

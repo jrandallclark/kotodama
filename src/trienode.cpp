@@ -4,6 +4,16 @@
 #include <QtCore/qdebug.h>
 #include <iostream>
 
+std::string toLowerTrieKey(const std::string& token) {
+    for (char c : token) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (uc >= 0x80 || (uc >= 'A' && uc <= 'Z')) {
+            return QString::fromStdString(token).toLower().toStdString();
+        }
+    }
+    return token;
+}
+
 TrieNode::~TrieNode() {
     // Clean up all child nodes
     for (auto& pair : children) {
@@ -15,10 +25,7 @@ void TrieNode::insert(Term* term, const std::vector<std::string>& tokens) {
     TrieNode* current = this;
 
     for (size_t i = 0; i < tokens.size(); i++) {
-        // Use QString for proper Unicode lowercasing
-        QString qToken = QString::fromStdString(tokens[i]);
-        QString qLowerToken = qToken.toLower();
-        std::string lowerToken = qLowerToken.toStdString();
+        std::string lowerToken = toLowerTrieKey(tokens[i]);
 
         if (current->children.find(lowerToken) == current->children.end()) {
             current->children[lowerToken] = new TrieNode();
@@ -45,12 +52,8 @@ bool TrieNode::removeHelper(const std::vector<std::string>& tokens, size_t index
         return false;
     }
 
-    // Get the lowercase version of the current token
-    QString qToken = QString::fromStdString(tokens[index]);
-    QString qLowerToken = qToken.toLower();
-    std::string lowerToken = qLowerToken.toStdString();
+    std::string lowerToken = toLowerTrieKey(tokens[index]);
 
-    // Find the child node for this token
     auto it = children.find(lowerToken);
     if (it == children.end()) {
         // Token not found - nothing to remove
@@ -75,13 +78,10 @@ Term* TrieNode::findLongestMatch(const std::vector<std::string>& tokens, int sta
     TrieNode* current = this;
     TrieNode* longestMatchNode = nullptr;
 
-    for (int i = startIndex; i < tokens.size(); i++) {
-        // Use QString for proper Unicode lowercasing
-        QString qToken = QString::fromStdString(tokens[i]);
-        QString qLowerToken = qToken.toLower();
-        std::string lowerToken = qLowerToken.toStdString();
+    for (int i = startIndex; i < static_cast<int>(tokens.size()); i++) {
+        std::string key = toLowerTrieKey(tokens[i]);
 
-        auto it = current->children.find(lowerToken);
+        auto it = current->children.find(key);
         if (it == current->children.end()) {
             break;
         }

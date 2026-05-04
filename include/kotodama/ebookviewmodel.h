@@ -3,7 +3,13 @@
 
 #include "term.h"
 #include "progresscalculator.h"
+#include "kotodama/tokenizerbackend.h"
+#include "kotodama/ilanguageprovider.h"
+#include "kotodama/itermstore.h"
+#include <QPair>
 #include <QString>
+#include <optional>
+#include <unordered_map>
 #include <vector>
 
 class TrieNode;
@@ -14,6 +20,8 @@ struct TokenInfo {
     int startPos;
     int endPos;
     QString text;
+    std::optional<TermLevel> level;
+    bool hasTerm() const { return level.has_value(); }
 };
 
 struct TermPosition {
@@ -66,7 +74,8 @@ struct EditRequest {
 class EbookViewModel
 {
 public:
-    EbookViewModel();
+    EbookViewModel(ILanguageProvider* langProvider = nullptr,
+                   ITermStore* termStore = nullptr);
     ~EbookViewModel();
 
     // Load content
@@ -80,22 +89,38 @@ public:
 
     // Selection and position queries
     int findTokenAtPosition(int pos) const;
-    Term* findTermAtPosition(int pos);
+    const Term* findTermAtPosition(int pos);
     QString getTokenSelectionText(int selectionStart, int selectionEnd) const;
 
     // Getters
-    QString getText() const { return text; }
-    QString getLanguage() const { return language; }
-    const std::vector<TokenInfo>& getTokenBoundaries() const { return tokenBoundaries; }
-    const std::vector<TermPosition>& getTermPositions() const { return termPositions; }
+    QString getText() const { return m_text; }
+    QString getLanguage() const { return m_language; }
+    const std::vector<TokenInfo>& getTokenBoundaries() const { return m_tokenBoundaries; }
+    const std::vector<TermPosition>& getTermPositions() const { return m_termPositions; }
 
     // Trigger re-analysis (e.g., after terms change)
     void refresh();
     void refreshTermMatches();  // Only re-match terms, don't re-tokenize
 
+    // Incremental term-position updates — return changed (start,end) ranges
+    // for the viewer to re-highlight. O(occurrences-of-term), no full rescan.
+    std::vector<QPair<int,int>> addTermPositions(const Term& term);
+    std::vector<QPair<int,int>> removeTermPositions(const QString& termText);
+
+    // Rebuild steps (public for yielding scheduler in viewer)
+    void findTermMatches();
+    void buildDisplayTokens();
+
+    // Chunked term matching — builds results incrementally so the viewer
+    // can yield to the event loop between chunks, keeping the UI responsive.
+    void beginChunkedTermMatching();
+    // Returns true when all tokens have been processed.
+    bool processMatchChunk(int maxTokens);
+    void commitTermMatches();
+
     // Focus for keyboard navigation
     bool setFocusedTokenIndex(int index);  // Returns true if set, false if out-of-range
-    int getFocusedTokenIndex() const { return focusedTokenIndex; }
+    int getFocusedTokenIndex() const { return m_focusedTokenIndex; }
     const TokenInfo* getFocusedToken() const;
     bool moveFocusNext();      // Returns true if moved
     bool moveFocusPrevious();  // Returns true if moved
@@ -120,15 +145,35 @@ public:
     int findLastTokenAtOrBefore(int pos) const;
 
 private:
-    QString text;
-    QString language;
-    std::vector<TokenInfo> tokenBoundaries;
-    std::vector<TermPosition> termPositions;
-    int focusedTokenIndex = -1;  // -1 means no focus
+    // Dependency injection — default adapters wrap singletons, can be overridden for testing
+    ILanguageProvider* m_langProvider;
+    ITermStore* m_termStore;
+
+    QString m_text;
+    QString m_language;
+    std::vector<TokenInfo> m_rawDisplayTokens;  // raw MeCab/regex output (before merge)
+    std::vector<TokenInfo> m_tokenBoundaries;
+    std::vector<TermPosition> m_termPositions;
+    std::unordered_map<int, size_t> m_termIdxByStartPos;  // startPos → index in m_termPositions
+    int m_focusedTokenIndex = -1;
+
+    // Cached trie tokens — rebuilt only on load, reused on term add/delete
+    std::vector<TokenResult> m_cachedMatchResults;
+    std::vector<std::string> m_cachedTrieTokens;
+
+    // Inverted index: first-token → list of position indices in m_cachedTrieTokens.
+    // Built lazily with the cache; used by addTermPositions for O(occurrences) lookup.
+    std::unordered_map<std::string, std::vector<int>> m_trieTokenIdxByFirstToken;
+
+    // Chunked term matching state
+    std::vector<TermPosition> m_pendingTermPositions;
+    int m_chunkScanIndex = 0;
+    int m_chunkTotalTokens = 0;
 
     // Helper methods
     void tokenizeText();
-    void findTermMatches();
+    void indexTermPositions();
+    const TermPosition* findTermPosition(const TokenInfo& token) const;
 };
 
 #endif // EBOOKVIEWMODEL_H

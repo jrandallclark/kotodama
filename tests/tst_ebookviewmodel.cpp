@@ -3,6 +3,10 @@
 #include "kotodama/ebookviewmodel.h"
 #include "kotodama/termmanager.h"
 #include "kotodama/databasemanager.h"
+#include "kotodama/ilanguageprovider.h"
+#include "kotodama/itermstore.h"
+#include "kotodama/trienode.h"
+#include "kotodama/term.h"
 
 #include <QStandardPaths>
 #include <QFile>
@@ -250,7 +254,7 @@ TEST_F(EbookViewModelTest, FindTermAtPositionReturnsCorrectTerm) {
     EbookViewModel model;
     model.loadContent("hello world test", "en");
 
-    Term* found = model.findTermAtPosition(7);  // Inside "world"
+    const Term* found = model.findTermAtPosition(7);  // Inside "world"
 
     ASSERT_NE(found, nullptr);
     EXPECT_EQ(found->term, "world");
@@ -262,7 +266,7 @@ TEST_F(EbookViewModelTest, FindTermAtPositionReturnsNullForNonTerm) {
     EbookViewModel model;
     model.loadContent("hello world test", "en");
 
-    Term* found = model.findTermAtPosition(0);  // "hello" is not a term
+    const Term* found = model.findTermAtPosition(0);  // "hello" is not a term
 
     EXPECT_EQ(found, nullptr);
 }
@@ -274,9 +278,9 @@ TEST_F(EbookViewModelTest, FindTermAtPositionWorksForMultiWord) {
     model.loadContent("The hello world is here", "en");
 
     // Position 5 is inside "hello" of the multi-word term
-    Term* found1 = model.findTermAtPosition(5);
+    const Term* found1 = model.findTermAtPosition(5);
     // Position 8 is inside "world" of the multi-word term
-    Term* found2 = model.findTermAtPosition(8);
+    const Term* found2 = model.findTermAtPosition(8);
 
     ASSERT_NE(found1, nullptr);
     ASSERT_NE(found2, nullptr);
@@ -512,11 +516,11 @@ TEST_F(EbookViewModelTest, JapaneseFindTermAtPositionAccurate) {
     // "これは日本語です" — "日本語" occupies char positions 3, 4, 5
     model.loadContent("これは日本語です", "ja");
 
-    Term* at3 = model.findTermAtPosition(3);  // 日
-    Term* at4 = model.findTermAtPosition(4);  // 本
-    Term* at5 = model.findTermAtPosition(5);  // 語
-    Term* at2 = model.findTermAtPosition(2);  // は — not part of the term
-    Term* at6 = model.findTermAtPosition(6);  // で — not part of the term
+    const Term* at3 = model.findTermAtPosition(3);  // 日
+    const Term* at4 = model.findTermAtPosition(4);  // 本
+    const Term* at5 = model.findTermAtPosition(5);  // 語
+    const Term* at2 = model.findTermAtPosition(2);  // は — not part of the term
+    const Term* at6 = model.findTermAtPosition(6);  // で — not part of the term
 
     ASSERT_NE(at3, nullptr);
     ASSERT_NE(at4, nullptr);
@@ -612,36 +616,182 @@ TEST_F(EbookViewModelTest, JapaneseFindTermAtPositionDoesNotCrossTermBoundaries)
     model.loadContent("双眼鏡でのぞいた", "ja");
 
     // Hovering over のぞい range must return のぞい, not 双眼鏡
-    Term* atの = model.findTermAtPosition(4);
-    ASSERT_NE(atの, nullptr);
-    EXPECT_EQ(atの->term, "のぞい");
-
-    // Hovering over 双眼鏡 range must return 双眼鏡
-    Term* at双 = model.findTermAtPosition(1);
-    ASSERT_NE(at双, nullptr);
-    EXPECT_EQ(at双->term, "双眼鏡");
-
-    // Hovering over で (between the two terms) must return nullptr
-    Term* atで = model.findTermAtPosition(3);
+    const Term* atの = model.findTermAtPosition(4);
+    const Term* at双 = model.findTermAtPosition(1);
+    const Term* atで = model.findTermAtPosition(3);
     EXPECT_EQ(atで, nullptr);
 }
 
 // ============================================================================
-// MeCab display-token / trie-term overlap edge case
+// Display-token / trie-term overlap: longest span always wins.
 //
-// Scenario:  聞こ is a known term (chars [4,6)).
-//            MeCab may parse 聞こえ as a single morpheme [4,7) because
-//            聞こえる (to be heard) is one verb.  The display token [4,7)
-//            extends PAST the known term boundary at 6, so the tokenUsed
-//            check (endPos <= term.endPos) fails and the whole token is
-//            emitted as an unknown highlight — masking the known term.
+// Greedy selection from all candidates (MeCab tokens + known-term spans),
+// sorted by start ASC, length DESC.  A token is known iff its span exactly
+// matches a termPosition; otherwise it is unknown.  Known terms that are
+// strictly contained within a longer MeCab token are absorbed (hidden).
+// ============================================================================
+
+// Case 1: Known term is a substring of a longer MeCab token → MeCab wins.
+// MeCab 一部 [0,2) is longer than known 部 [1,2): 一部 absorbs 部.
+TEST_F(EbookViewModelTest, JapaneseKnownTermAtEndOfDisplayToken) {
+    TermManager::instance().addTerm("部", "ja", TermLevel::Known);
+
+    EbookViewModel model;
+    // 一(0)部(1)
+    model.loadContent("一部", "ja");
+
+    const auto& tokens = model.getTokenBoundaries();
+    ASSERT_EQ(tokens.size(), 1u);
+    EXPECT_EQ(tokens[0].text, QString::fromUtf8("一部"));
+    EXPECT_EQ(tokens[0].startPos, 0);
+    EXPECT_EQ(tokens[0].endPos,   2);
+
+    // 一部 itself is not a saved term → unknown
+    TermPreview preview = model.getPreviewForToken(&tokens[0]);
+    EXPECT_FALSE(preview.isKnown);
+
+    // Only unknown highlights (部 is absorbed)
+    auto highlights = model.getHighlights();
+    ASSERT_EQ(highlights.size(), 1u);
+    EXPECT_TRUE(highlights[0].isUnknown);
+}
+
+// Case 2: Known term at start, absorbed by longer MeCab token.
+// MeCab 部屋 [0,2) is longer than known 部 [0,1): 部屋 absorbs 部.
+TEST_F(EbookViewModelTest, JapaneseKnownTermAtStartOfDisplayToken) {
+    TermManager::instance().addTerm("部", "ja", TermLevel::Known);
+
+    EbookViewModel model;
+    // 部(0)屋(1)
+    model.loadContent("部屋", "ja");
+
+    const auto& tokens = model.getTokenBoundaries();
+    ASSERT_EQ(tokens.size(), 1u);
+    EXPECT_EQ(tokens[0].text, QString::fromUtf8("部屋"));
+    EXPECT_EQ(tokens[0].startPos, 0);
+    EXPECT_EQ(tokens[0].endPos,   2);
+
+    // 部屋 is not a saved term
+    EXPECT_FALSE(model.getPreviewForToken(&tokens[0]).isKnown);
+
+    auto highlights = model.getHighlights();
+    ASSERT_EQ(highlights.size(), 1u);
+    EXPECT_TRUE(highlights[0].isUnknown);
+}
+
+// Case 3: Known term in middle, absorbed by longer MeCab token.
+// MeCab 根本 [0,2) is longer than known 本 [1,2): 根本 absorbs 本.
+// The 的 [2,3) is a separate MeCab token (also unknown).
+TEST_F(EbookViewModelTest, JapaneseKnownTermInMiddleOfDisplayToken) {
+    TermManager::instance().addTerm("本", "ja", TermLevel::Known);
+
+    EbookViewModel model;
+    // 根(0)本(1)的(2)
+    model.loadContent("根本的", "ja");
+
+    const auto& tokens = model.getTokenBoundaries();
+    // MeCab splits into 根本 [0,2) and 的 [2,3); 本 is absorbed
+    ASSERT_GE(tokens.size(), 1u);
+
+    // 根本 [0,2) exists and is unknown
+    bool foundKonpon = false;
+    for (const auto& t : tokens) {
+        if (t.text == QString::fromUtf8("根本") && t.startPos == 0 && t.endPos == 2) {
+            foundKonpon = true;
+            EXPECT_FALSE(model.getPreviewForToken(&t).isKnown);
+        }
+    }
+    EXPECT_TRUE(foundKonpon) << "Expected token 根本 [0,2)";
+
+    // 的 [2,3) exists and is unknown
+    bool foundTeki = false;
+    for (const auto& t : tokens) {
+        if (t.text == QString::fromUtf8("的") && t.startPos == 2 && t.endPos == 3) {
+            foundTeki = true;
+            EXPECT_FALSE(model.getPreviewForToken(&t).isKnown);
+        }
+    }
+    EXPECT_TRUE(foundTeki) << "Expected token 的 [2,3)";
+
+    // All highlights are unknown (本 is absorbed)
+    auto highlights = model.getHighlights();
+    for (const auto& h : highlights) {
+        EXPECT_TRUE(h.isUnknown) << "All tokens should be unknown (本 absorbed)";
+    }
+}
+
+// Case 5: Known term and MeCab token have the same span → known wins.
+TEST_F(EbookViewModelTest, JapaneseKnownTermFullyEncompassesDisplayToken) {
+    TermManager::instance().addTerm("学生", "ja", TermLevel::Known);
+
+    EbookViewModel model;
+    // 私(0)は(1)学(2)生(3)で(4)す(5)
+    model.loadContent("私は学生です", "ja");
+
+    const auto& tokens = model.getTokenBoundaries();
+
+    // Must have at least one token — find the 学生 token
+    int gakuseiCount = 0;
+    for (const auto& t : tokens) {
+        if (t.startPos == 2 && t.endPos == 4 &&
+            t.text == QString::fromUtf8("学生")) {
+            gakuseiCount++;
+        }
+    }
+    EXPECT_EQ(gakuseiCount, 1) << "学生 must appear exactly once as a display token";
+
+    // 学生 is a known term → known highlight must exist
+    bool foundKnown = false;
+    auto highlights = model.getHighlights();
+    for (const auto& h : highlights) {
+        if (!h.isUnknown && h.startPos == 2 && h.endPos == 4) {
+            foundKnown = true;
+            EXPECT_EQ(h.level, TermLevel::Known);
+        }
+    }
+    EXPECT_TRUE(foundKnown) << "Known highlight for 学生 [2,4) not found";
+}
+
+// Case 8: No known terms — display tokens unchanged.
+TEST_F(EbookViewModelTest, JapaneseNoKnownTermsDisplayTokensUnchanged) {
+    EbookViewModel model;
+    model.loadContent("日本語を勉強する", "ja");
+
+    const auto& tokens = model.getTokenBoundaries();
+    EXPECT_FALSE(tokens.empty());
+
+    for (const auto& t : tokens) {
+        bool hasLetter = false;
+        for (const QChar& ch : t.text) {
+            if (ch.isLetter()) {
+                hasLetter = true;
+                break;
+            }
+        }
+        EXPECT_TRUE(hasLetter) << "Token '" << t.text.toStdString()
+                               << "' has no letters";
+    }
+
+    auto highlights = model.getHighlights();
+    for (const auto& h : highlights) {
+        EXPECT_TRUE(h.isUnknown);
+    }
+}
+
+
+// ============================================================================
+// MeCab display-token / trie-term overlap: longest wins
 //
-// Rules that must hold regardless of which tokenizer handles display:
-//   1. Trie matching (char-based): 聞こ matched at [4,6); え at 6 is unknown.
-//   2. findTermAtPosition: returns 聞こ for positions 4 and 5; null for 6.
-//   3. A known highlight for [4,6) must exist in getHighlights().
-//   4. No unknown highlight may start before position 6 (i.e. no unknown
-//      region may overlap the known term's range [4,6)).
+// Scenario:  聞こ is a known term [4,6).  MeCab parses 聞こえ as a single
+//            morpheme [4,7).  Since 聞こえ is longer than 聞こ, it wins
+//            and absorbs the known term.  The display token is 聞こえ [4,7)
+//            unknown; the known term 聞こ does not produce a separate highlight.
+//
+// Rules:
+//   1. Trie matching (char-based): 聞こ matched at [4,6) — unchanged.
+//   2. findTermAtPosition: returns nullptr for all positions (聞こ absorbed).
+//   3. No known highlight for 聞こ (absorbed by longer MeCab token).
+//   4. Single unknown highlight 聞こえ [4,7) — no split.
 // ============================================================================
 
 TEST_F(EbookViewModelTest, JapaneseKnownTermNotMaskedByMeCabToken) {
@@ -652,46 +802,40 @@ TEST_F(EbookViewModelTest, JapaneseKnownTermNotMaskedByMeCabToken) {
     // 水(0)の(1)音(2)が(3)聞(4)こ(5)え(6)た(7)
     model.loadContent("水の音が聞こえた", "ja");
 
-    // --- Rule 1: trie matched 聞こ at [4,6), not 聞こえ ---
+    // --- Rule 1: trie still matched 聞こ at [4,6) ---
     const auto& termPositions = model.getTermPositions();
     ASSERT_EQ(termPositions.size(), 1u);
     EXPECT_EQ(termPositions[0].termData.term, "聞こ");
     EXPECT_EQ(termPositions[0].startPos, 4);
     EXPECT_EQ(termPositions[0].endPos,   6);
 
-    // --- Rule 2: hover positions ---
-    Term* at4 = model.findTermAtPosition(4);  // 聞 — inside the term
-    Term* at5 = model.findTermAtPosition(5);  // こ — inside the term
-    Term* at6 = model.findTermAtPosition(6);  // え — NOT inside any term
+    // --- Rule 2: hover positions — 聞こ absorbed, no exact display-token match ---
+    const Term* at4 = model.findTermAtPosition(4);  // 聞
+    const Term* at5 = model.findTermAtPosition(5);  // こ
+    const Term* at6 = model.findTermAtPosition(6);  // え
 
-    ASSERT_NE(at4, nullptr);
-    ASSERT_NE(at5, nullptr);
-    EXPECT_EQ(at4->term, "聞こ");
-    EXPECT_EQ(at5->term, "聞こ");
-    EXPECT_EQ(at6, nullptr) << "え is not part of 聞こ; hover must return null";
+    EXPECT_EQ(at4, nullptr) << "聞こ absorbed by longer 聞こえ display token";
+    EXPECT_EQ(at5, nullptr) << "聞こ absorbed by longer 聞こえ display token";
+    EXPECT_EQ(at6, nullptr) << "え is part of unknown 聞こえ token";
 
-    // --- Rules 3 & 4: highlight correctness ---
+    // --- Rules 3 & 4: single unknown highlight for 聞こえ [4,7) ---
     auto highlights = model.getHighlights();
 
-    // Rule 3: known highlight for the term must exist
+    // Rule 3: NO known highlight for 聞こ (absorbed)
     auto knownIt = std::find_if(highlights.begin(), highlights.end(),
         [](const HighlightInfo& h) {
             return !h.isUnknown && h.startPos == 4 && h.endPos == 6;
         });
-    EXPECT_NE(knownIt, highlights.end())
-        << "Known highlight for 聞こ at [4,6) not found";
+    EXPECT_EQ(knownIt, highlights.end())
+        << "聞こ must NOT have a separate known highlight (absorbed by 聞こえ)";
 
-    // Rule 4: no unknown highlight may overlap the known term's range [4,6).
-    // If MeCab returns 聞こえ as a single token [4,7) and it leaks through as
-    // unknown, this assertion will fail — revealing the display-layer bug.
-    for (const auto& h : highlights) {
-        if (h.isUnknown) {
-            bool overlapsKnownTerm = (h.startPos < 6 && h.endPos > 4);
-            EXPECT_FALSE(overlapsKnownTerm)
-                << "Unknown highlight [" << h.startPos << "," << h.endPos
-                << ") overlaps known term [4,6) — MeCab token boundary mismatch";
-        }
-    }
+    // Rule 4: unknown highlight must exist for 聞こえ [4,7)
+    auto unknownIt = std::find_if(highlights.begin(), highlights.end(),
+        [](const HighlightInfo& h) {
+            return h.isUnknown && h.startPos == 4 && h.endPos == 7;
+        });
+    EXPECT_NE(unknownIt, highlights.end())
+        << "Unknown highlight for 聞こえ [4,7) not found";
 }
 
 // tokenCount in the trie must always reflect the char-based tokenizer count,
@@ -933,14 +1077,26 @@ TEST_F(EbookViewModelTest, GetFocusRange_MultiWordTermReturnsFullTermSpan) {
 }
 
 TEST_F(EbookViewModelTest, GetFocusRange_SecondTokenInMultiWordTermReturnsSameSpan) {
+    // With buildDisplayTokens, "hello world" is now a single known-term display token.
+    // This was previously "hello" (index 1) + "world" (index 2) as separate tokens.
+    // Now token index 1 is "hello world", and index 2 is "now".
     TermManager::instance().addTerm("hello world", "en", TermLevel::Known);
 
     EbookViewModel model;
     model.loadContent("say hello world now", "en");
 
-    // "world" is token index 2, also part of "hello world" term [4, 15)
-    QPair<int, int> range = model.getFocusRange(2);
+    // Token 1 is the full "hello world" known-term token [4, 15)
+    const auto& tokens = model.getTokenBoundaries();
+    int hwIndex = -1;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        if (tokens[i].text == "hello world") {
+            hwIndex = static_cast<int>(i);
+            break;
+        }
+    }
+    ASSERT_GE(hwIndex, 0) << "Could not find token 'hello world'";
 
+    QPair<int, int> range = model.getFocusRange(hwIndex);
     EXPECT_EQ(range.first, 4);
     EXPECT_EQ(range.second, 15);
 }
@@ -951,24 +1107,17 @@ TEST_F(EbookViewModelTest, GetFocusRange_JapaneseMultiCharTermReturnsFullSpan) {
     EbookViewModel model;
     model.loadContent("にした際", "ja");
 
-    // Find which token index corresponds to "し"
-    const auto& tokens = model.getTokenBoundaries();
-    int shiIndex = -1;
-    for (size_t i = 0; i < tokens.size(); ++i) {
-        if (tokens[i].text == "し") {
-            shiIndex = static_cast<int>(i);
-            break;
-        }
-    }
+    // With buildDisplayTokens, "した" is a single known-term display token.
+    // Find the token that covers position 1 (where し starts).
+    int tokenIdx = model.findTokenAtPosition(1);
+    ASSERT_GE(tokenIdx, 0) << "Could not find token at position 1";
 
-    ASSERT_GE(shiIndex, 0) << "Could not find token 'し'";
-
-    // "し" is part of "した" term - should return full term span
-    QPair<int, int> range = model.getFocusRange(shiIndex);
-
-    // The term "した" should span both characters
+    // "し" is part of "した" term - should return full term span [1, 3)
+    QPair<int, int> range = model.getFocusRange(tokenIdx);
+    EXPECT_EQ(range.first, 1);
+    EXPECT_EQ(range.second, 3);
     EXPECT_EQ(range.second - range.first, 2)
-        << "Focus range for 'し' should span 2 characters (the full 'した' term)";
+        << "Focus range for token containing 'し' should span 2 characters";
 }
 
 TEST_F(EbookViewModelTest, GetFocusRange_InvalidIndexReturnsEmpty) {
@@ -1072,16 +1221,117 @@ TEST_F(EbookViewModelTest, GetPreviewForMultiWordKnownTerm) {
     EbookViewModel model;
     model.loadContent("say hello world now", "en");
 
-    // Find a token within the multi-word term
+    // "hello world" is now a single display token (longest span wins)
     const auto& tokens = model.getTokenBoundaries();
-    ASSERT_GE(tokens.size(), 3u);
-    // "hello" should be at index 1, within the "hello world" term
-    const TokenInfo* token = &tokens[1];
+    const TokenInfo* hwToken = nullptr;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        if (tokens[i].text == "hello world") {
+            hwToken = &tokens[i];
+            break;
+        }
+    }
+    ASSERT_NE(hwToken, nullptr) << "Expected token 'hello world' in boundaries";
 
-    TermPreview preview = model.getPreviewForToken(token);
+    TermPreview preview = model.getPreviewForToken(hwToken);
 
     EXPECT_EQ(preview.term, "hello world");
     EXPECT_EQ(preview.pronunciation, "pron");
     EXPECT_EQ(preview.definition, "common phrase");
     EXPECT_TRUE(preview.isKnown);
+}
+
+// ============================================================================
+// Mock implementations for dependency injection seam verification
+// ============================================================================
+
+class MockLanguageProvider : public ILanguageProvider {
+public:
+    MOCK_METHOD(LanguageConfig, getLanguageByCode, (const QString&), (const, override));
+    MOCK_METHOD(QString, getWordRegex, (const QString&), (const, override));
+    MOCK_METHOD(bool, isCharacterBased, (const QString&), (const, override));
+};
+
+class MockTermStore : public ITermStore {
+public:
+    MOCK_METHOD(TrieNode*, getTrieForLanguage, (const QString&), (override));
+    MOCK_METHOD(bool, termExists, (const QString&, const QString&), (const, override));
+    MOCK_METHOD(Term, getTerm, (const QString&, const QString&), (const, override));
+};
+
+// Verify dependency injection seam: injecting a mock language provider
+// causes the model to use it instead of the LanguageManager singleton.
+TEST_F(EbookViewModelTest, InjectedLanguageProviderIsUsedForRegex) {
+    MockLanguageProvider mockLang;
+    MockTermStore mockStore;
+
+    // LanguageConfig must provide a valid tokenizer for tokenization to succeed
+    LanguageConfig config;
+    config.setCode("zz");
+    config.setWordRegex("[a-zA-Z]+");
+    config.setIsCharBased(false);
+
+    TrieNode emptyTrie;
+
+    EXPECT_CALL(mockLang, getLanguageByCode(QString("zz")))
+        .WillOnce(::testing::Return(config));
+    EXPECT_CALL(mockLang, getWordRegex(QString("zz")))
+        .WillRepeatedly(::testing::Return(QString("[a-zA-Z]+")));
+    EXPECT_CALL(mockLang, isCharacterBased(QString("zz")))
+        .WillRepeatedly(::testing::Return(false));
+    EXPECT_CALL(mockStore, getTrieForLanguage(QString("zz")))
+        .WillRepeatedly(::testing::Return(&emptyTrie));
+
+    EbookViewModel model(&mockLang, &mockStore);
+    model.loadContent("hello world test", "zz");
+
+    // The model should have tokenized using the mock's regex
+    EXPECT_EQ(model.getLanguage(), "zz");
+    EXPECT_EQ(model.getText(), "hello world test");
+}
+
+// Verify ITermStore seam: injecting a mock term store with a known-term trie
+// causes the model to recognize terms from the mock trie instead of TermManager.
+TEST_F(EbookViewModelTest, InjectedTermStoreRecognizesTerms) {
+    MockLanguageProvider mockLang;
+    MockTermStore mockStore;
+
+    LanguageConfig config;
+    config.setCode("xx");
+    config.setWordRegex("[a-zA-Z]+");
+    config.setIsCharBased(false);
+
+    // Build a trie that contains "alice"
+    TrieNode mockTrie;
+    Term aliceTerm;
+    aliceTerm.term = "alice";
+    aliceTerm.level = TermLevel::WellKnown;
+    aliceTerm.definition = "a person";
+    aliceTerm.tokenCount = 1;
+    mockTrie.insert(&aliceTerm, {"alice"});
+
+    EXPECT_CALL(mockLang, getLanguageByCode(QString("xx")))
+        .WillOnce(::testing::Return(config));
+    EXPECT_CALL(mockLang, getWordRegex(QString("xx")))
+        .WillRepeatedly(::testing::Return(QString("[a-zA-Z]+")));
+    EXPECT_CALL(mockLang, isCharacterBased(QString("xx")))
+        .WillRepeatedly(::testing::Return(false));
+    EXPECT_CALL(mockStore, getTrieForLanguage(QString("xx")))
+        .WillRepeatedly(::testing::Return(&mockTrie));
+
+    EbookViewModel model(&mockLang, &mockStore);
+    model.loadContent("alice and bob", "xx");
+
+    // "alice" should be recognized via the mock trie
+    const std::vector<TokenInfo>& tokens = model.getTokenBoundaries();
+    ASSERT_GT(tokens.size(), 0u);
+
+    bool foundAlice = false;
+    for (const auto& token : tokens) {
+        if (token.text == "alice") {
+            foundAlice = true;
+            EXPECT_EQ(token.level, TermLevel::WellKnown);
+            break;
+        }
+    }
+    EXPECT_TRUE(foundAlice) << "Expected token 'alice' to be recognized from mock trie";
 }

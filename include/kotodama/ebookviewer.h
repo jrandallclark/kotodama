@@ -8,9 +8,15 @@
 #include <QKeyEvent>
 #include <QTimer>
 
+#include <memory>
+#include <vector>
+#include <utility>
+
 #include "term.h"
 #include "ebookviewmodel.h"
 #include "terminfopanel.h"
+
+class TermHighlighter;
 
 class EbookViewer : public QMainWindow
 {
@@ -34,28 +40,34 @@ signals:
 
 private:
     QTextBrowser* textDisplay;
-    QString currentFile;
-    QString currentUuid;
+    QString m_currentUuid;
 
     // Model containing all business logic
-    EbookViewModel model;
+    EbookViewModel m_model;
+
+    // Per-paragraph QSyntaxHighlighter — avoids document-wide layout revalidation.
+    // Owned by QTextDocument (QSyntaxHighlighter parent).
+    TermHighlighter* m_highlighter;
 
     // Info panel widget
     TermInfoPanel* infoPanel;
 
     // Pinned state for edit mode
-    bool infoPanelPinned;
-    QString pinnedTermText;
-    QString pinnedLanguage;
+    bool m_infoPanelPinned;
+    QString m_pinnedTermText;
+    QString m_pinnedLanguage;
+    int m_pinnedStartPos = -1;
+    int m_pinnedEndPos = -1;
+
+    // Highlight-batch generation counter — bumped on each save/delete so
+    // pending rehighlight batches from a previous edit can be cancelled.
+    int m_rebuildGeneration = 0;
 
     // Reading position tracking
     QTimer* positionSaveTimer;
 
     // Focus for keyboard navigation
-    int previousFocusStartPos = -1;  // Track previous focus range for clearing
-    int previousFocusEndPos = -1;
     void updateFocusHighlight();
-    void clearFocusHighlight(int startPos, int endPos);
     void showEditPanelForFocusedToken();
     void updatePreviewForFocusedToken();
 
@@ -64,14 +76,13 @@ private:
     void showEditRequest(const EditRequest& request);
 
     // UI methods
-    void applyHighlights();
-    QTextCharFormat getFormatForLevel(TermLevel level);
     void handleTextSelection(QMouseEvent* event);
     void handleMouseHover(QMouseEvent* event);
     void saveReadingPosition();
     void restoreReadingPosition();
     int adjustPositionForCharacterCenter(QPoint viewportPos, int textPos);
     void ensureTokenVisible(int tokenIndex);
+    void rehighlightBatched(std::shared_ptr<std::vector<QPair<int,int>>> ranges, int start, int gen);
 
 private slots:
     void onTermSaved(QString pronunciation, QString definition, TermLevel level);

@@ -6,9 +6,9 @@
 #include <QApplication>
 #include <QIcon>
 #include <QLocale>
-#include <QTranslator>
 #include <QMessageBox>
 #include <QStandardPaths>
+#include <QTranslator>
 
 int main(int argc, char *argv[])
 {

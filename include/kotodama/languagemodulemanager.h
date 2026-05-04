@@ -35,7 +35,6 @@ public:
     static QString moduleDictPathFor(const QString& langCode) {
         return QDir(modulePathFor(langCode)).absoluteFilePath("dic");
     }
-
     bool isInstalled(const QString& langCode) const;
     QString modulePath(const QString& langCode) const { return modulePathFor(langCode); }
     QString moduleDictPath(const QString& langCode) const { return moduleDictPathFor(langCode); }

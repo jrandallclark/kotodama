@@ -17,12 +17,19 @@ std::vector<TokenResult> RegexTokenizer::tokenize(const QString& text)
 
         if (splitIntoChars) {
             int start = static_cast<int>(match.capturedStart());
-            for (int i = 0; i < static_cast<int>(matched.length()); ++i) {
+            int i = 0;
+            while (i < static_cast<int>(matched.length())) {
+                int charLen = 1;
+                if (matched.at(i).isHighSurrogate() && i + 1 < matched.length()
+                    && matched.at(i + 1).isLowSurrogate()) {
+                    charLen = 2;
+                }
                 tokens.push_back({
-                    matched.mid(i, 1).toStdString(),
+                    matched.mid(i, charLen).toStdString(),
                     start + i,
-                    start + i + 1
+                    start + i + charLen
                 });
+                i += charLen;
             }
         } else {
             tokens.push_back({

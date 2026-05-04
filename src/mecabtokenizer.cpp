@@ -66,6 +66,8 @@ std::vector<TokenResult> MeCabTokenizer::tokenize(const QString& text)
     const MeCab::Node* node = d->tagger->parseToNode(utf8.constData());
 
     // Pre-build byte→char offset map for correct position reporting
+    // QString uses UTF-16: BMP characters are 1 code unit, but supplementary
+    // characters (U+10000+, 4-byte UTF-8) require a surrogate pair = 2 code units.
     QList<int> byteToChar(utf8.size() + 1, -1);
     int charIdx = 0;
     for (int byteIdx = 0; byteIdx < utf8.size(); ) {
@@ -75,7 +77,9 @@ std::vector<TokenResult> MeCabTokenizer::tokenize(const QString& text)
         for (int k = 1; k < seqLen && byteIdx + k < utf8.size(); ++k)
             byteToChar[byteIdx + k] = charIdx;
         byteIdx += seqLen;
-        ++charIdx;
+        // Supplementary characters (4-byte UTF-8 → U+10000+) occupy
+        // 2 UTF-16 code units in QString, not 1
+        charIdx += (seqLen == 4) ? 2 : 1;
     }
     byteToChar[utf8.size()] = charIdx;
 
