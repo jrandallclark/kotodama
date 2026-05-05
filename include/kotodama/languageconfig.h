@@ -39,6 +39,11 @@ public:
     // Returns a non-owning pointer; valid for the lifetime of this LanguageConfig.
     const Tokenizer* tokenizer() const;
 
+    // Returns true when the display tokenizer is not regex-based (e.g., MeCab).
+    // When false, the trie-path regex already produces identical tokens and the
+    // caller can reuse the trie-tokenization cache instead of re-tokenizing.
+    bool needsDisplayTokenization() const;
+
 private:
     QString nameValue;
     QString codeValue;

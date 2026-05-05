@@ -23,6 +23,11 @@ QString Tokenizer::backendName() const
     return backend ? backend->name() : QString("null");
 }
 
+bool Tokenizer::isRegex() const
+{
+    return backend && backend->isRegex();
+}
+
 std::unique_ptr<Tokenizer> Tokenizer::createRegex(
     const QString& pattern, bool splitIntoChars)
 {

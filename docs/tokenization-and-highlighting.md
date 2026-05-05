@@ -2,7 +2,11 @@
 
 ## Overview
 
-Kotodama's text analysis uses **dual tokenization** — two independent tokenizers run on the same source text, producing output at different granularity levels. These outputs are then merged into a single **display-token layer** that feeds the syntax highlighter.
+Kotodama's text analysis uses **dual tokenization** — the text is tokenized through two separate paths that feed different parts of the pipeline. These outputs are then merged into a single **display-token layer** that feeds the syntax highlighter.
+
+**For space-delimited languages** (English, French, etc.), both paths use the exact same regex tokenizer and produce identical token lists. The merge step only changes output when multi-word known-term spans (e.g. `"hello world"`) consolidate their individual word tokens into a single display token — there is no granularity difference between the paths.
+
+**For Japanese only**, the two paths diverge: the display tokenizer is MeCab (morphological analysis), while the trie tokenizer is a character-by-character regex. `LanguageConfig::needsDisplayTokenization()` detects this via `TokenizerBackend::isRegex()` — MeCab returns `false`, triggering a separate display tokenizer pass. For all other languages (including Chinese, Korean), the regex-based display tokenizer returns `true` from `isRegex()`, and `tokenizeText()` skips the redundant second pass by deriving `m_rawDisplayTokens` directly from the trie-path cache.
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
@@ -39,14 +43,21 @@ flowchart TD
 
 ## Dual Tokenizer Architecture
 
-Two tokenizers with different purposes:
+Two tokenizer paths feed the pipeline. They may use the same or different backends depending on the language:
 
-| Tokenizer | Purpose | Japanese | English |
-|-----------|---------|----------|---------|
+| Path | Purpose | Japanese (char-based) | English (word-based) |
+|------|---------|----------------------|---------------------|
 | **Display** | Determines visible token boundaries the user interacts with | MeCab (morphological) | Regex `[a-zA-Z]+` |
-| **Trie** | Matches known phrases in the trie — always single characters or words | Regex char-based `[\p{Han}\p{Hiragana}\p{Katakana}]` | Regex word-based `[a-zA-Z]+` |
+| **Trie** | Matches known phrases in the trie — tokenizes at the granularity terms are stored | Regex char-based (separate from MeCab) | Regex `[a-zA-Z]+` (same as display) |
 
-**Why two?** MeCab produces linguistically meaningful tokens (e.g., `聞こえ` as one verb morpheme), but the trie needs finer granularity to match multi-character known terms (e.g., `聞こ` as a 2-character substring). The display tokenizer determines what the user *sees* as tokens; the trie tokenizer determines what the trie *matches* against.
+### Why Two Paths?
+
+The dual-path architecture exists for all languages, but a second tokenizer only runs when `LanguageConfig::needsDisplayTokenization()` returns true (i.e., the display tokenizer's backend is not regex-based, checked via `TokenizerBackend::isRegex()`). Currently only MeCab (Japanese) is a non-regex backend; for all other languages, `tokenizeText()` derives display tokens from the cached trie results, avoiding a redundant full-text scan.
+
+- **Japanese**: MeCab produces linguistically meaningful tokens (e.g., `聞こえ` as one verb morpheme), but the trie needs character-level granularity to match multi-character known terms (e.g., `聞こ` as a 2-character substring embedded inside `聞こえ`). Without character-level trie matching, `聞こ` could not be found.
+- **All other languages** (including Chinese, Korean): Both paths would produce identical token lists from the same `createRegex(wordRegex, isCharBased)` call, so `tokenizeText()` reuses the trie-path cache directly — no second regex pass. The merge in `buildDisplayTokens()` only matters when multi-word term spans (e.g., `"hello world"`, a Chinese `成语`) consolidate their individual tokens.
+
+### Japanese Example (different granularity)
 
 ```mermaid
 flowchart LR
@@ -65,6 +76,27 @@ flowchart LR
     C1 --> F["buildDisplayTokens()"]
     E2 --> F
     F --> G["m_tokenBoundaries<br/>[水, の, 音, が, 聞こえ, た]<br/>聞こ absorbed by longer 聞こえ"]
+```
+
+### English Example (identical tokenizers)
+
+```mermaid
+flowchart LR
+    subgraph "Display Path"
+        A1["say hello world now"] --> B1["Regex [a-zA-Z]+"]
+        B1 --> C1["m_rawDisplayTokens<br/>[say, hello, world, now]"]
+    end
+
+    subgraph "Trie Path"
+        A2["say hello world now"] --> B2["Regex [a-zA-Z]+ (same)"]
+        B2 --> C2["m_cachedTrieTokens<br/>[say, hello, world, now]"]
+        C2 --> D2["Trie Scanning"]
+        D2 --> E2["m_termPositions<br/>[hello world at [4,15)]"]
+    end
+
+    C1 --> F["buildDisplayTokens()"]
+    E2 --> F
+    F --> G["m_tokenBoundaries<br/>[say, hello world, now]<br/>multi-word term consolidates words"]
 ```
 
 ## Trie-Based Phrase Matching
@@ -107,6 +139,10 @@ To avoid re-tokenizing the full text on every term add/delete, the trie tokenize
 | `m_cachedMatchResults` | `vector<TokenResult>` — full token list with byte positions |
 | `m_cachedTrieTokens` | `vector<string>` — lowercased token text for trie lookup |
 | `m_trieTokenIdxByFirstToken` | `unordered_map<string, vector<int>>` — inverted index for O(occurrences) term addition |
+
+### Cache Reuse for Display Tokens
+
+The cache also serves as the source for display tokens when the display tokenizer is identical to the trie tokenizer. `LanguageConfig::needsDisplayTokenization()` checks `TokenizerBackend::isRegex()` — a virtual method that returns `true` for `RegexTokenizer` and `false` for `MeCabTokenizer`. For non-Japanese languages, `tokenizeText()` skips the call to `config.tokenizer()->tokenize()` and instead loops over `m_cachedMatchResults` with the same letter/script filtering. This avoids a redundant full-text regex scan.
 
 When a single term is added, `addTermPositions()` uses the inverted index to find all positions where the term's first token appears, then verifies the full token sequence — no full-text rescan needed.
 
@@ -256,6 +292,7 @@ sequenceDiagram
     Trie-->>Model: m_termPositions
 
     Model->>Tokenizer: tokenize(text) [display tokenizer]
+    Note right of Tokenizer: Skipped when !needsDisplayTokenization()<br/>(non-Japanese: reuses trie cache)
     Tokenizer-->>Model: m_rawDisplayTokens
 
     Model->>Model: buildDisplayTokens()
@@ -270,7 +307,7 @@ sequenceDiagram
 
 ## Key Design Decisions
 
-1. **Dual tokenization** — MeCab for display quality, regex for trie matching granularity. The user sees linguistically valid tokens, but the trie matches at the character level needed for multi-character CJK phrases.
+1. **Dual tokenization, single pass** — Two paths exist conceptually, but `LanguageConfig::needsDisplayTokenization()` gates whether a second tokenizer actually runs. Only languages with a non-regex display tokenizer (currently just Japanese via MeCab) trigger the second pass. For all other languages, `tokenizeText()` derives `m_rawDisplayTokens` directly from the trie-path cache (`m_cachedMatchResults`), avoiding redundant full-text scanning.
 
 2. **Longest-span-wins merging** — Resolves the fundamental conflict between display tokenizer boundaries and known-term spans deterministically. A known term is only visible if its span survives the greedy selection. If it conflicts with a longer MeCab token, the MeCab token wins (the term is "absorbed"). This is correct because a display token represents a unit of interaction — showing a partial highlight inside a MeCab morpheme would confuse the user.
 

@@ -15,6 +15,7 @@ public:
     std::vector<TokenResult> tokenize(const QString& text) const;
     bool isAvailable() const;
     QString backendName() const;
+    bool isRegex() const;
 
     // Factory methods
     static std::unique_ptr<Tokenizer> createRegex(

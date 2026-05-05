@@ -11,6 +11,7 @@ public:
 
     std::vector<TokenResult> tokenize(const QString& text) override;
     QString name() const override { return "regex"; }
+    bool isRegex() const override { return true; }
 
 private:
     QRegularExpression regex;

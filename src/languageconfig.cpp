@@ -106,3 +106,8 @@ const Tokenizer* LanguageConfig::tokenizer() const
     }
     return tokenizerCache.get();
 }
+
+bool LanguageConfig::needsDisplayTokenization() const
+{
+    return !tokenizer()->isRegex();
+}

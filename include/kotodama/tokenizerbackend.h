@@ -19,6 +19,7 @@ public:
     virtual std::vector<TokenResult> tokenize(const QString& text) = 0;
     virtual QString name() const = 0;
     virtual bool isAvailable() const { return true; }
+    virtual bool isRegex() const { return false; }
 };
 
 #endif // TOKENIZERBACKEND_H

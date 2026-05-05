@@ -93,14 +93,26 @@ void EbookViewModel::tokenizeText()
     }
 
     LanguageConfig config = m_langProvider->getLanguageByCode(m_language);
-    const Tokenizer* tokenizer = config.tokenizer();
+
+    // Reuse the trie-tokenizer cache when the display tokenizer is the same
+    // regex. Only languages with a custom tokenizer (e.g., MeCab for
+    // Japanese) need a separate display-tokenization pass.
+    const std::vector<TokenResult>* source = nullptr;
+    std::vector<TokenResult> fallback;
+
+    if (!config.needsDisplayTokenization() && !m_cachedMatchResults.empty()) {
+        source = &m_cachedMatchResults;
+    } else {
+        fallback = config.tokenizer()->tokenize(m_text);
+        source = &fallback;
+    }
 
     QRegularExpression scriptRe;
     if (config.isCharBased()) {
         scriptRe = QRegularExpression(config.wordRegex());
     }
 
-    for (const TokenResult& result : tokenizer->tokenize(m_text)) {
+    for (const TokenResult& result : *source) {
         QString tokenText = QString::fromStdString(result.text);
 
         bool hasLetter = false;
