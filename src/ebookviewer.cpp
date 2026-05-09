@@ -294,7 +294,7 @@ void EbookViewer::showEditRequest(const EditRequest& request)
                            request.existingLevel);
     } else {
         infoPanel->showEdit(request.termText, request.language,
-                           "", "", TermLevel::Recognized);
+                           request.existingPronunciation, "", TermLevel::Recognized);
     }
 
     m_infoPanelPinned = true;

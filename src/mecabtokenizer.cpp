@@ -24,6 +24,27 @@ QString resolvedDicPath()
     // missing dict here is a programmer error.
     return QDir(LanguageModuleManager::moduleDictPathFor("ja")).absolutePath();
 }
+
+// MeCab ipadic returns readings in katakana. Convert to hiragana for display.
+QString katakanaToHiragana(const QString& katakana)
+{
+    QString hiragana;
+    hiragana.reserve(katakana.length());
+    for (const QChar& ch : katakana) {
+        ushort uc = ch.unicode();
+        // Full-width katakana block: U+30A1 – U+30F6, plus iteration marks U+30FD–U+30FE
+        // Cap at 0x30F6 because 0x30F7–0x30FA (katakana with dakuten) have no precomposed
+        // hiragana equivalents in Unicode; subtracting 0x60 would yield combining marks.
+        if (uc >= 0x30A1 && uc <= 0x30F6) {
+            hiragana.append(QChar(uc - 0x60));
+        } else if (uc == 0x30FD || uc == 0x30FE) {
+            hiragana.append(QChar(uc - 0x60));
+        } else {
+            hiragana.append(ch);
+        }
+    }
+    return hiragana;
+}
 }
 
 struct MeCabTokenizer::Impl {
@@ -109,10 +130,25 @@ std::vector<TokenResult> MeCabTokenizer::tokenize(const QString& text)
 
         int byteStart = byteOffset + (node->rlength - node->length);
         int byteEnd   = byteStart + static_cast<int>(node->length);
+
+        // Extract reading from MeCab feature (ipadic format: reading is 8th field, index 7)
+        std::string pronunciation;
+        if (node->feature) {
+            QString feature = QString::fromUtf8(node->feature);
+            QStringList fields = feature.split(',');
+            if (fields.size() > 7) {
+                QString reading = fields[7].trimmed();
+                if (reading != "*") {
+                    pronunciation = katakanaToHiragana(reading).toStdString();
+                }
+            }
+        }
+
         tokens.push_back({
             surface,
             byteToChar[byteStart],
-            byteToChar[byteEnd]
+            byteToChar[byteEnd],
+            pronunciation
         });
         byteOffset += node->rlength;
     }

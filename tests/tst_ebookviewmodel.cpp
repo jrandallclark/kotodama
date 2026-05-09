@@ -1335,3 +1335,46 @@ TEST_F(EbookViewModelTest, InjectedTermStoreRecognizesTerms) {
     }
     EXPECT_TRUE(foundAlice) << "Expected token 'alice' to be recognized from mock trie";
 }
+
+// ============================================================================
+// Regression: buildDisplayTokens() must preserve TokenInfo::pronunciation
+// ============================================================================
+
+TEST_F(EbookViewModelTest, JapaneseUnknownTokenPropagatesPronunciation) {
+    EbookViewModel model;
+    model.loadContent("事故", "ja");
+
+    const auto& tokens = model.getTokenBoundaries();
+    ASSERT_FALSE(tokens.empty());
+
+    // Find the token for 事故
+    const TokenInfo* jiko = nullptr;
+    for (const auto& token : tokens) {
+        if (token.text == QString("事故")) {
+            jiko = &token;
+            break;
+        }
+    }
+    ASSERT_NE(jiko, nullptr) << "Expected token '事故' in boundaries";
+
+    // Pronunciation must survive the merge in buildDisplayTokens()
+    EXPECT_EQ(jiko->pronunciation, QString("じこ"));
+
+    // getPreviewForToken() must also surface it
+    TermPreview preview = model.getPreviewForToken(jiko);
+    EXPECT_EQ(preview.term, "事故");
+    EXPECT_EQ(preview.pronunciation, "じこ");
+    EXPECT_FALSE(preview.isKnown);
+}
+
+TEST_F(EbookViewModelTest, JapaneseEditRequestForUnknownTokenIncludesPronunciation) {
+    EbookViewModel model;
+    model.loadContent("事故", "ja");
+
+    // Position 0 is inside 事故
+    EditRequest request = model.getEditRequestForPosition(0);
+
+    EXPECT_EQ(request.termText, "事故");
+    EXPECT_FALSE(request.exists);
+    EXPECT_EQ(request.existingPronunciation, "じこ");
+}

@@ -20,6 +20,7 @@ struct TokenInfo {
     int startPos;
     int endPos;
     QString text;
+    QString pronunciation;
     std::optional<TermLevel> level;
     bool hasTerm() const { return level.has_value(); }
 };

@@ -154,3 +154,59 @@ TEST(MeCabTokenizerTest, ContextChangesTokenization)
         EXPECT_LE(t.endPos, 5);  // "浮かんだ空" = 5 chars
     }
 }
+
+// ============================================================================
+// Reading conversion: MeCab returns katakana readings — we convert to hiragana
+// ============================================================================
+
+TEST(MeCabTokenizerTest, ReadingsAreConvertedToHiragana)
+{
+    MeCabTokenizer tokenizer;
+
+    // 事故 → MeCab reading is ジコ (katakana). We expect じこ (hiragana).
+    auto tokens = tokenizer.tokenize("事故");
+    ASSERT_FALSE(tokens.empty());
+
+    // Find the token for 事故
+    const TokenResult* jiko = nullptr;
+    for (const auto& t : tokens) {
+        if (QString::fromStdString(t.text) == QString("事故")) {
+            jiko = &t;
+            break;
+        }
+    }
+    ASSERT_NE(jiko, nullptr) << "Expected token '事故'";
+    EXPECT_EQ(QString::fromStdString(jiko->pronunciation), QString("じこ"));
+}
+
+TEST(MeCabTokenizerTest, MissingReadingIsEmpty)
+{
+    MeCabTokenizer tokenizer;
+
+    // ASCII symbols typically have no reading in ipadic (feature field 7 is *)
+    auto tokens = tokenizer.tokenize("@");
+    for (const auto& t : tokens) {
+        EXPECT_TRUE(t.pronunciation.empty())
+            << "Expected empty pronunciation for symbol, got: " << t.pronunciation;
+    }
+}
+
+TEST(MeCabTokenizerTest, SmallKanaReadingIsConverted)
+{
+    MeCabTokenizer tokenizer;
+
+    // 学校 → reading is ガッコウ (katakana). We expect がっこう (hiragana).
+    // This exercises small-tsu (ッ → っ) and long-vowel ウ → う.
+    auto tokens = tokenizer.tokenize("学校");
+    ASSERT_FALSE(tokens.empty());
+
+    const TokenResult* gakko = nullptr;
+    for (const auto& t : tokens) {
+        if (QString::fromStdString(t.text) == QString("学校")) {
+            gakko = &t;
+            break;
+        }
+    }
+    ASSERT_NE(gakko, nullptr) << "Expected token '学校'";
+    EXPECT_EQ(QString::fromStdString(gakko->pronunciation), QString("がっこう"));
+}

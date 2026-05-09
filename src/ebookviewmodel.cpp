@@ -132,6 +132,7 @@ void EbookViewModel::tokenizeText()
         tokenInfo.startPos = result.startPos;
         tokenInfo.endPos   = result.endPos;
         tokenInfo.text     = tokenText;
+        tokenInfo.pronunciation = QString::fromStdString(result.pronunciation);
         m_rawDisplayTokens.push_back(tokenInfo);
     }
 }
@@ -224,6 +225,7 @@ void EbookViewModel::buildDisplayTokens()
         int start;
         int end;
         QString text;
+        QString pronunciation;
         bool  isTrie;
     };
 
@@ -231,12 +233,12 @@ void EbookViewModel::buildDisplayTokens()
 
     // Raw display tokens (MeCab or char-based fallback)
     for (const TokenInfo& rt : m_rawDisplayTokens) {
-        candidates.push_back({rt.startPos, rt.endPos, rt.text, false});
+        candidates.push_back({rt.startPos, rt.endPos, rt.text, rt.pronunciation, false});
     }
 
     // Known-term spans (store just positions, extract text only for winners)
     for (const TermPosition& tp : m_termPositions) {
-        candidates.push_back({tp.startPos, tp.endPos, QString(), true});
+        candidates.push_back({tp.startPos, tp.endPos, QString(), QString(), true});
     }
 
     // Sort: start ASC, length DESC, trie-first
@@ -257,6 +259,7 @@ void EbookViewModel::buildDisplayTokens()
         token.startPos = c.start;
         token.endPos   = c.end;
         token.text = c.isTrie ? m_text.mid(c.start, c.end - c.start) : c.text;
+        token.pronunciation = c.pronunciation;
 
         auto it = m_termIdxByStartPos.find(c.start);
         if (it != m_termIdxByStartPos.end() && m_termPositions[it->second].endPos == c.end) {
@@ -568,7 +571,7 @@ TermPreview EbookViewModel::getPreviewForToken(const TokenInfo* token) const
         };
     }
 
-    return TermPreview{token->text, "", "Click to add definition", false};
+    return TermPreview{token->text, token->pronunciation, "Click to add definition", false};
 }
 
 TermValidationResult EbookViewModel::validateTermLength(const QString& cleanedText) const
@@ -624,6 +627,7 @@ EditRequest EbookViewModel::getEditRequestForPosition(int position) const
     // No exact match — use display token text as new-term suggestion
     if (!request.exists) {
         request.termText = token.text;
+        request.existingPronunciation = token.pronunciation;
     }
 
     // Clean the text
@@ -683,6 +687,12 @@ EditRequest EbookViewModel::getEditRequestForSelection(int selectionStart, int s
         QString selectedText = getTokenSelectionText(selectionStart, selectionEnd);
         if (!selectedText.isEmpty()) {
             request.termText = selectedText;
+            // If selection covers exactly one token, pre-fill pronunciation from tokenizer
+            int startTokenIdx = findTokenAtPosition(selectionStart);
+            int endTokenIdx = findTokenAtPosition(selectionEnd - 1);
+            if (startTokenIdx >= 0 && startTokenIdx == endTokenIdx) {
+                request.existingPronunciation = m_tokenBoundaries[startTokenIdx].pronunciation;
+            }
         }
     }
 

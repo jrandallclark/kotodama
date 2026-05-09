@@ -9,6 +9,7 @@ struct TokenResult {
     std::string text;
     int startPos;  // character offset in source QString
     int endPos;    // exclusive end offset
+    std::string pronunciation;
 };
 
 class TokenizerBackend
