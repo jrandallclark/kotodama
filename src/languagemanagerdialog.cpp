@@ -164,6 +164,20 @@ bool LanguageManagerDialog::isBuiltInRow(int row)
     return LanguageManager::instance().isBuiltIn(code);
 }
 
+void LanguageManagerDialog::selectLanguage(const QString& code)
+{
+    if (code.isEmpty()) return;
+
+    for (int row = 0; row < languageTable->rowCount(); ++row) {
+        QTableWidgetItem* codeItem = languageTable->item(row, 1);
+        if (codeItem && codeItem->text() == code) {
+            languageTable->selectRow(row);
+            languageTable->scrollToItem(codeItem, QAbstractItemView::PositionAtCenter);
+            return;
+        }
+    }
+}
+
 void LanguageManagerDialog::onTableSelectionChanged()
 {
     QList<QTableWidgetItem*> selectedItems = languageTable->selectedItems();

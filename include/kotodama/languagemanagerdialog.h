@@ -14,6 +14,8 @@ public:
     explicit LanguageManagerDialog(QWidget *parent = nullptr);
     ~LanguageManagerDialog();
 
+    void selectLanguage(const QString& code);
+
 private slots:
     void onAddClicked();
     void onEditClicked();

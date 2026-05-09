@@ -199,6 +199,7 @@ void MainWindow::loadTexts()
         installBtn->setMinimumHeight(Constants::Control::IMPORT_BUTTON_MIN_HEIGHT);
         connect(installBtn, &QPushButton::clicked, this, [this, languageCode]() {
             LanguageManagerDialog dialog(this);
+            dialog.selectLanguage(languageCode);
             dialog.exec();
             // Refresh: if the user installed the module, the banner
             // gives way to the normal card view.
